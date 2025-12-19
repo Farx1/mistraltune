@@ -1,96 +1,93 @@
 """
 Pytest configuration and fixtures for MistralTune tests.
-
-Provides mock fixtures for Mistral API client to enable testing without real API calls.
 """
 
 import os
 import pytest
-from unittest.mock import Mock, MagicMock
-from typing import Optional
+import tempfile
+import shutil
 from pathlib import Path
+from typing import Generator
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+
+# Set test environment variables
+os.environ["DEMO_MODE"] = "1"
+os.environ["AUTH_REQUIRED"] = "false"
+os.environ["SQL_DEBUG"] = "0"
+
+# Import after setting env vars
 import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-# Set DEMO_MODE by default for tests
-if not os.getenv("DEMO_MODE"):
-    os.environ["DEMO_MODE"] = "1"
+from src.db.models import Base
+from src.db.database import get_db
+from src.api.main import app
+from fastapi.testclient import TestClient
 
 
-def get_mock_mistral_client() -> Mock:
-    """
-    Create a mock Mistral client with realistic responses.
+@pytest.fixture(scope="function")
+def test_db() -> Generator[Session, None, None]:
+    """Create a temporary SQLite database for testing."""
+    # Create temporary database
+    db_fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(db_fd)
     
-    Returns:
-        Mock object that mimics the Mistral API client
-    """
-    mock_client = Mock()
+    # Create engine and session
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     
-    # Mock files.upload method
-    mock_upload = Mock()
-    mock_upload.id = "file_test123"
-    mock_upload.filename = "test.jsonl"
-    mock_upload.purpose = "fine-tuning"
-    mock_client.files.upload = Mock(return_value=mock_upload)
+    # Create a shared session that will be reused
+    shared_db = TestingSessionLocal()
     
-    # Mock fine_tuning.jobs.create method
-    mock_job = Mock()
-    mock_job.id = "ftjob_test123"
-    mock_job.model = "open-mistral-7b"
-    mock_job.status = "validated"
-    mock_job.created_at = 1234567890
-    mock_job.fine_tuned_model = None
-    mock_job.error = None
-    mock_client.fine_tuning.jobs.create = Mock(return_value=mock_job)
+    # Override get_db dependency to return the shared session
+    def override_get_db():
+        yield shared_db
     
-    # Mock fine_tuning.jobs.get method
-    mock_job_status = Mock()
-    mock_job_status.id = "ftjob_test123"
-    mock_job_status.model = "open-mistral-7b"
-    mock_job_status.status = "succeeded"
-    mock_job_status.created_at = 1234567890
-    mock_job_status.fine_tuned_model = "ft:open-mistral-7b:test123:20240101:abc123"
-    mock_job_status.error = None
-    mock_client.fine_tuning.jobs.get = Mock(return_value=mock_job_status)
+    app.dependency_overrides[get_db] = override_get_db
     
-    # Mock chat.completions.create method
-    mock_chat_response = Mock()
-    mock_choice = Mock()
-    mock_choice.message = Mock()
-    mock_choice.message.content = "This is a mock response from the fine-tuned model."
-    mock_choice.finish_reason = "stop"
-    mock_chat_response.choices = [mock_choice]
-    mock_chat_response.usage = Mock()
-    mock_chat_response.usage.prompt_tokens = 10
-    mock_chat_response.usage.completion_tokens = 20
-    mock_chat_response.usage.total_tokens = 30
-    mock_client.chat.completions.create = Mock(return_value=mock_chat_response)
-    
-    return mock_client
+    try:
+        yield shared_db
+    finally:
+        shared_db.close()
+        # Close all connections
+        engine.dispose()
+        app.dependency_overrides.clear()
+        # Clean up - retry on Windows
+        import time
+        for _ in range(5):
+            try:
+                if os.path.exists(db_path):
+                    os.unlink(db_path)
+                break
+            except (PermissionError, OSError):
+                time.sleep(0.1)
 
 
-@pytest.fixture
-def mock_mistral_client():
-    """Fixture that provides a mock Mistral client."""
-    return get_mock_mistral_client()
+@pytest.fixture(scope="function")
+def client(test_db: Session) -> TestClient:
+    """Create a test client for the FastAPI app."""
+    return TestClient(app)
 
 
-@pytest.fixture
-def demo_mode(monkeypatch):
-    """Fixture that sets DEMO_MODE=1 for tests."""
-    monkeypatch.setenv("DEMO_MODE", "1")
-    yield
-    monkeypatch.delenv("DEMO_MODE", raising=False)
+@pytest.fixture(scope="function")
+def temp_data_dir() -> Generator[Path, None, None]:
+    """Create a temporary directory for test data."""
+    temp_dir = tempfile.mkdtemp()
+    yield Path(temp_dir)
+    shutil.rmtree(temp_dir)
 
 
-@pytest.fixture
-def temp_data_dir(tmp_path):
-    """Fixture that provides a temporary data directory."""
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    uploads_dir = data_dir / "uploads"
-    uploads_dir.mkdir()
-    return data_dir
-
+@pytest.fixture(scope="function")
+def sample_jsonl_file(temp_data_dir: Path) -> Path:
+    """Create a sample JSONL file for testing."""
+    file_path = temp_data_dir / "test_dataset.jsonl"
+    sample_data = [
+        '{"messages": [{"role": "user", "content": "What is AI?"}, {"role": "assistant", "content": "AI is artificial intelligence."}]}\n',
+        '{"messages": [{"role": "user", "content": "What is ML?"}, {"role": "assistant", "content": "ML is machine learning."}]}\n',
+        '{"messages": [{"role": "user", "content": "What is NLP?"}, {"role": "assistant", "content": "NLP is natural language processing."}]}\n',
+    ]
+    with open(file_path, "w") as f:
+        f.writelines(sample_data)
+    return file_path

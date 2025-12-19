@@ -7,7 +7,7 @@ and convert them to HuggingFace datasets in the correct format for training.
 
 import json
 from typing import List, Dict, Any
-from datasets import Dataset, DatasetDict
+from datasets import Dataset as HFDataset, DatasetDict
 
 
 def load_jsonl(file_path: str) -> List[Dict[str, Any]]:

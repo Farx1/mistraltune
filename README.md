@@ -3,6 +3,10 @@
 [![CI](https://github.com/Farx1/mistraltune/actions/workflows/ci.yml/badge.svg)](https://github.com/Farx1/mistraltune/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-in%20development-orange.svg)](https://github.com/Farx1/mistraltune)
+
+> **⚠️ Projet en cours de développement**  
+> Ce projet est actuellement en phase de développement actif. Certaines fonctionnalités peuvent être incomplètes ou sujettes à des modifications.
 
 A professional fine-tuning platform for Mistral AI models with support for both cloud-based API fine-tuning and local QLoRA training. Features a modern web dashboard for managing jobs, datasets, and comparing models.
 
@@ -252,6 +256,8 @@ Required fields:
 
 ## 🧪 Testing
 
+> **Note**: Une suite de tests complète est disponible. Voir [tests/README.md](tests/README.md) pour plus de détails.
+
 ### Running Tests
 
 The test suite uses **DEMO_MODE** by default, which mocks the Mistral API to avoid real API calls and costs. This allows tests to run quickly without requiring API keys.
@@ -378,11 +384,31 @@ If backend shows API key errors:
 - Verify `MISTRAL_API_KEY` is set correctly
 - Restart backend after changing `.env`
 
-### Frontend Can't Connect to Backend
+### Frontend Can't Connect to Backend ("Failed to fetch")
 
-- Verify backend is running: `curl http://localhost:8000/api/health`
-- Check `NEXT_PUBLIC_API_URL` in `.env` matches backend URL
-- Check browser console for CORS errors (backend should allow all origins in dev)
+**Symptôme**: Le frontend affiche "Failed to fetch" ou ne peut pas charger les données.
+
+**Solution**:
+1. **Vérifier que le backend est démarré**:
+   ```bash
+   python scripts/check_backend.py
+   # OU
+   curl http://localhost:8000/api/health
+   ```
+
+2. **Démarrer le backend** si ce n'est pas le cas:
+   ```bash
+   python scripts/start_backend.py
+   ```
+
+3. **Vérifier l'ordre de démarrage**:
+   - Le backend (port 8000) doit être démarré **avant** le frontend
+   - Les deux doivent tourner en même temps
+
+4. Vérifier `NEXT_PUBLIC_API_URL` dans `.env` correspond à l'URL du backend
+5. Vérifier la console du navigateur pour les erreurs CORS
+
+Voir [DEMARRAGE.md](DEMARRAGE.md) et [TROUBLESHOOTING.md](TROUBLESHOOTING.md) pour plus de détails.
 
 ### Windows PowerShell Execution Policy
 
@@ -404,20 +430,94 @@ pip install -r requirements.txt
 
 ---
 
-## 📚 What I learned
+## 🧪 Tests
 
-- **LLM Fine-tuning**: Deep understanding of QLoRA, LoRA adapters, and API-based fine-tuning workflows
-- **Full-stack Integration**: Building seamless connections between React frontend, FastAPI backend, and external APIs
-- **Real-time Systems**: Implementing WebSocket-based monitoring for long-running ML jobs
-- **MLOps Practices**: Structuring reproducible ML projects with proper configuration, testing, and CI/CD
-- **Developer Experience**: Creating one-command startup scripts and comprehensive documentation
+Le projet inclut une suite de tests complète :
+
+```bash
+# Tous les tests
+pytest
+
+# Tests spécifiques
+pytest tests/test_basic_functionality.py
+pytest tests/test_database.py
+
+# Avec couverture
+pytest --cov=src --cov-report=html
+```
+
+Voir [tests/README.md](tests/README.md) pour plus de détails.
+
+## 🐳 Docker
+
+Le projet peut être déployé avec Docker :
+
+```bash
+# Démarrer tous les services
+docker-compose up
+
+# Services disponibles:
+# - API: http://localhost:8000
+# - Frontend: http://localhost:3000
+# - PostgreSQL: localhost:5432
+# - Redis: localhost:6379
+# - MinIO: http://localhost:9000
+```
+
+Voir [docker-compose.yml](docker-compose.yml) pour la configuration complète.
+
+## 📚 Ce que j'ai appris
+
+- **LLM Fine-tuning**: Compréhension approfondie de QLoRA, LoRA adapters, et workflows de fine-tuning via API
+- **Intégration Full-stack**: Connexions fluides entre React frontend, FastAPI backend, et APIs externes
+- **Systèmes Temps Réel**: Implémentation de monitoring WebSocket pour jobs ML de longue durée
+- **MLOps**: Structuration de projets ML reproductibles avec configuration, tests, et CI/CD
+- **Architecture Production**: PostgreSQL, Celery, S3, Docker, observabilité
+- **Developer Experience**: Scripts de démarrage et documentation complète
 
 ---
 
-## 🔮 Possible improvements
+## 🚧 État du Projet
 
-- **Multi-user Support**: Add authentication and user management for team collaboration
-- **Advanced Monitoring**: Integrate Prometheus/Grafana for detailed metrics and alerting
+Ce projet est **en cours de développement actif**. Voici l'état actuel :
+
+### ✅ Fonctionnalités Implémentées
+
+- ✅ Interface web moderne avec Next.js et shadcn/ui
+- ✅ API REST complète avec FastAPI
+- ✅ Support fine-tuning via Mistral API
+- ✅ Support QLoRA local (scripts)
+- ✅ Gestion des datasets (upload, validation, versioning)
+- ✅ Suivi des jobs en temps réel (WebSocket)
+- ✅ Base de données avec PostgreSQL/SQLite
+- ✅ Système de queue avec Celery (optionnel)
+- ✅ Stockage S3-compatible (MinIO/local)
+- ✅ Authentification JWT (optionnelle)
+- ✅ Observabilité et métriques
+- ✅ Configuration Docker complète
+- ✅ Suite de tests complète
+
+### 🚧 En Développement
+
+- 🔄 Intégration complète QLoRA dans l'API
+- 🔄 Interface d'authentification frontend
+- 🔄 Amélioration de la gestion des erreurs
+- 🔄 Optimisations de performance
+
+### 📋 Prochaines Étapes
+
+- [ ] Déploiement en production
+- [ ] Documentation API complète
+- [ ] Tests end-to-end complets
+- [ ] Monitoring avancé (Prometheus/Grafana)
+- [ ] Support multi-utilisateurs complet
+
+## 🔮 Améliorations Futures
+
+- **Multi-user Support**: Authentification et gestion d'utilisateurs pour collaboration en équipe
+- **Advanced Monitoring**: Intégration Prometheus/Grafana pour métriques détaillées et alertes
+- **CI/CD**: Pipeline de déploiement automatisé
+- **Scaling**: Support pour déploiement distribué
 - **Model Versioning**: Track model versions and enable rollback capabilities
 - **Distributed Training**: Support for multi-GPU and distributed QLoRA training
 - **Cost Optimization**: Add cost tracking and optimization suggestions for API usage

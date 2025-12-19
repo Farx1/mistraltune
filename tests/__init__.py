@@ -1,2 +1,1 @@
-# Tests package
-
+"""Test suite for MistralTune."""

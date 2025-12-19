@@ -11,7 +11,6 @@ Fournit des endpoints REST et WebSocket pour:
 import os
 import json
 import asyncio
-import sqlite3
 import sys
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -19,11 +18,15 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from mistralai import Mistral
+from sqlalchemy.orm import Session
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 # Look for .env in project root (two levels up from this file)
@@ -35,6 +38,26 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mistral_api_finetune import upload_dataset, create_finetuning_job, get_job_status, validate_jsonl
 from mistral_api_inference import compare_responses, generate_response
+from db.database import init_db, get_db
+from db.models import Job, Dataset, DatasetVersion
+from jobs.state_machine import JobState, update_job_status
+from jobs.logging import get_job_logs
+from storage.s3_client import get_storage_client
+from datasets.versioning import create_dataset_version, compute_dataset_hash
+
+# Import custom logging (avoid conflict with stdlib logging)
+import importlib.util
+logging_config_path = Path(__file__).parent.parent / "logging" / "config.py"
+spec = importlib.util.spec_from_file_location("app_logging_config", logging_config_path)
+app_logging_config = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(app_logging_config)
+
+logging_middleware_path = Path(__file__).parent.parent / "logging" / "middleware.py"
+spec_mw = importlib.util.spec_from_file_location("app_logging_middleware", logging_middleware_path)
+app_logging_middleware = importlib.util.module_from_spec(spec_mw)
+spec_mw.loader.exec_module(app_logging_middleware)
+
+from metrics.collector import get_metrics_collector
 
 
 # Modèles Pydantic
@@ -67,45 +90,7 @@ class JobStatusResponse(BaseModel):
     progress: Optional[float] = None
 
 
-# Base de données SQLite pour l'historique
-DB_PATH = Path("data/jobs.db")
-
-
-def init_db():
-    """Initialise la base de données SQLite."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS jobs (
-            id TEXT PRIMARY KEY,
-            job_type TEXT NOT NULL,
-            model TEXT NOT NULL,
-            status TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            fine_tuned_model TEXT,
-            error TEXT,
-            config TEXT,
-            metadata TEXT
-        )
-    """)
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS datasets (
-            id TEXT PRIMARY KEY,
-            filename TEXT NOT NULL,
-            file_id TEXT,
-            num_samples INTEGER,
-            uploaded_at INTEGER NOT NULL,
-            metadata TEXT
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
+# Database initialization - now using SQLAlchemy ORM
 
 
 @asynccontextmanager
@@ -123,6 +108,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Setup logging
+app_logging_config.setup_logging()
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -131,6 +119,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Correlation ID middleware
+app.add_middleware(app_logging_middleware.CorrelationIDMiddleware)
 
 # Client Mistral global
 mistral_client: Optional[Mistral] = None
@@ -256,19 +247,86 @@ async def root():
 
 
 @app.get("/api/health")
-async def health():
-    """Endpoint de santé."""
-    return {
+async def health(db: Session = Depends(get_db)):
+    """Endpoint de santé avec vérification des dépendances."""
+    health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "version": "1.0.0",
-        "mistral_api_configured": bool(os.getenv("MISTRAL_API_KEY"))
+        "mistral_api_configured": bool(os.getenv("MISTRAL_API_KEY")),
     }
+    
+    # Check database connectivity
+    try:
+        db.execute("SELECT 1")
+        health_status["database"] = "connected"
+    except Exception as e:
+        health_status["database"] = f"error: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    # Check Redis connectivity (if configured)
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        try:
+            import redis
+            redis_client = redis.from_url(redis_url)
+            redis_client.ping()
+            health_status["redis"] = "connected"
+        except Exception as e:
+            health_status["redis"] = f"error: {str(e)}"
+            health_status["status"] = "degraded"
+    
+    # Check S3 connectivity (if configured)
+    storage_client = get_storage_client()
+    if storage_client.config.use_s3:
+        try:
+            # Try to list buckets
+            if storage_client.s3_client:
+                storage_client.s3_client.list_buckets()
+                health_status["storage"] = "connected"
+            else:
+                health_status["storage"] = "local_fallback"
+        except Exception as e:
+            health_status["storage"] = f"error: {str(e)}"
+            health_status["status"] = "degraded"
+    else:
+        health_status["storage"] = "local_filesystem"
+    
+    return health_status
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """Expose metrics in Prometheus-style format."""
+    metrics_collector = get_metrics_collector()
+    metrics = metrics_collector.get_metrics()
+    
+    # Format as Prometheus-style text (simple version)
+    lines = []
+    lines.append("# HELP mistraltune_active_jobs Number of active jobs")
+    lines.append(f"mistraltune_active_jobs {metrics['jobs']['active']}")
+    
+    for job_type, duration in metrics["jobs"]["durations"].items():
+        lines.append(f"# HELP mistraltune_job_duration_seconds Job duration in seconds")
+        lines.append(f'mistraltune_job_duration_seconds{{job_type="{job_type}"}} {duration}')
+    
+    for key, count in metrics["jobs"]["counts"].items():
+        parts = key.split("_")
+        job_type = parts[0]
+        status = "_".join(parts[1:])
+        lines.append(f'# HELP mistraltune_job_count Total number of jobs')
+        lines.append(f'mistraltune_job_count{{job_type="{job_type}",status="{status}"}} {count}')
+    
+    lines.append(f"# HELP mistraltune_api_latency_p50 API latency p50 in milliseconds")
+    lines.append(f"mistraltune_api_latency_p50 {metrics['api']['latency_ms']['p50']}")
+    
+    return Response(content="\n".join(lines), media_type="text/plain")
 
 
 # Datasets endpoints
 @app.post("/api/datasets/upload")
-async def upload_dataset_endpoint(file: UploadFile = File(...)):
+@app.post("/datasets/upload")  # Frontend compatibility
+async def upload_dataset_endpoint(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Upload et validation d'un fichier JSONL.
     
@@ -305,23 +363,29 @@ async def upload_dataset_endpoint(file: UploadFile = File(...)):
             )
         
         file_id = file_data.id
+        uploaded_at = int(datetime.now().timestamp())
         
-        # Sauvegarder dans la DB
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO datasets (id, filename, file_id, num_samples, uploaded_at, metadata)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            file_id,
-            file.filename,
-            file_id,
-            num_lines,
-            int(datetime.now().timestamp()),
-            json.dumps({"size": len(content)})
-        ))
-        conn.commit()
-        conn.close()
+        # Compute file hash
+        file_hash = compute_dataset_hash(temp_path)
+        
+        # Upload to storage (S3 or local)
+        storage_client = get_storage_client()
+        storage_key = f"{file_id}/{file.filename}"
+        s3_key = storage_client.upload_file(temp_path, storage_key, bucket_type="datasets")
+        
+        # Sauvegarder dans la DB avec ORM
+        dataset = Dataset(
+            id=file_id,
+            filename=file.filename,
+            file_hash=file_hash,
+            size_bytes=len(content),
+            uploaded_at=uploaded_at,
+            metadata_json={"size": len(content), "num_samples": num_lines},
+        )
+        db.add(dataset)
+        
+        # Create initial version with storage
+        version = create_dataset_version(db, file_id, temp_path, s3_key=s3_key)
         
         # Nettoyer le fichier temporaire
         temp_path.unlink()
@@ -333,34 +397,24 @@ async def upload_dataset_endpoint(file: UploadFile = File(...)):
             "status": "uploaded"
         }
     except Exception as e:
+        db.rollback()
         temp_path.unlink()
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'upload: {str(e)}")
 
 
 @app.get("/api/datasets")
-async def list_datasets():
+@app.get("/datasets")  # Frontend compatibility
+async def list_datasets(db: Session = Depends(get_db)):
     """Liste tous les datasets uploadés."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM datasets ORDER BY uploaded_at DESC")
-    
-    rows = cursor.fetchall()
-    columns = [desc[0] for desc in cursor.description]
-    
-    datasets = []
-    for row in rows:
-        dataset = dict(zip(columns, row))
-        if dataset.get('metadata'):
-            dataset['metadata'] = json.loads(dataset['metadata'])
-        datasets.append(dataset)
-    
-    conn.close()
+    datasets_query = db.query(Dataset).order_by(Dataset.uploaded_at.desc()).all()
+    datasets = [d.to_dict() for d in datasets_query]
     return {"datasets": datasets}
 
 
 # Jobs endpoints
-@app.post("/api/jobs/create")
-async def create_job(request: JobCreateRequest, background_tasks: BackgroundTasks):
+@app.post("/api/jobs")
+@app.post("/jobs")  # Frontend compatibility
+async def create_job(request: JobCreateRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Crée un nouveau job de fine-tuning.
     
@@ -369,6 +423,8 @@ async def create_job(request: JobCreateRequest, background_tasks: BackgroundTask
     - QLoRA local (job_type="qlora_local") - à implémenter
     """
     if request.job_type == "mistral_api":
+        # Check if Celery is available (Redis configured)
+        use_celery = bool(os.getenv("REDIS_URL") or os.getenv("CELERY_BROKER_URL"))
         try:
             client = get_mistral_client()
             
@@ -383,36 +439,57 @@ async def create_job(request: JobCreateRequest, background_tasks: BackgroundTask
                 suffix=request.suffix,
             )
             
-            # Sauvegarder dans la DB
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO jobs (id, job_type, model, status, created_at, updated_at, config, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                job_info["id"],
-                "mistral_api",
-                request.model,
-                job_info["status"],
-                job_info["created_at"],
-                int(datetime.now().timestamp()),
-                json.dumps({
+            # Sauvegarder dans la DB avec ORM
+            job = Job(
+                id=job_info["id"],
+                job_type="mistral_api",
+                model=request.model,
+                status=JobState.PENDING.value,  # Start as PENDING, will be queued
+                created_at=job_info["created_at"],
+                started_at=None,
+                finished_at=None,
+                progress=None,
+                error_message=None,
+                config_json={
                     "learning_rate": request.learning_rate,
                     "epochs": request.epochs,
                     "batch_size": request.batch_size,
                     "suffix": request.suffix,
-                }),
-                json.dumps({"training_file_id": request.training_file_id})
-            ))
-            conn.commit()
-            conn.close()
+                },
+                dataset_version_id=None,  # Will be linked in Phase C
+                model_output_ref=None,
+                metrics_json={"training_file_id": request.training_file_id},
+            )
+            db.add(job)
+            db.commit()
+            
+            # Enqueue Celery task if available, otherwise use BackgroundTasks (fallback)
+            if use_celery:
+                try:
+                    from workers.tasks import execute_mistral_api_job
+                    # Update status to QUEUED
+                    update_job_status(db, job_info["id"], JobState.QUEUED.value)
+                    # Enqueue task
+                    execute_mistral_api_job.delay(job_info["id"])
+                except Exception as e:
+                    # Fallback to BackgroundTasks if Celery fails
+                    logger.warning(f"Celery not available, using BackgroundTasks: {e}")
+                    use_celery = False
+            
+            if not use_celery:
+                # Fallback: Use BackgroundTasks (original behavior)
+                # This maintains backward compatibility
+                from api.main import _poll_job_status_background
+                background_tasks.add_task(_poll_job_status_background, job_info["id"])
             
             return {
-                "job_id": job_info["id"],
-                "status": job_info["status"],
+                "id": job_info["id"],
+                "job_id": job_info["id"],  # For backward compatibility
+                "status": job.status,
                 "message": "Job créé avec succès"
             }
         except Exception as e:
+            db.rollback()
             raise HTTPException(status_code=500, detail=f"Erreur lors de la création du job: {str(e)}")
     
     elif request.job_type == "qlora_local":
@@ -425,95 +502,131 @@ async def create_job(request: JobCreateRequest, background_tasks: BackgroundTask
         raise HTTPException(status_code=400, detail=f"Type de job invalide: {request.job_type}")
 
 
+@app.post("/api/jobs/create")
+async def create_job_legacy(request: JobCreateRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Legacy endpoint for backward compatibility."""
+    result = await create_job(request, background_tasks, db)
+    return result
+
+
 @app.get("/api/jobs")
-async def list_jobs(status: Optional[str] = None):
+@app.get("/jobs")  # Frontend compatibility
+async def list_jobs(status: Optional[str] = None, db: Session = Depends(get_db)):
     """Liste tous les jobs avec filtres optionnels."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
+    query = db.query(Job)
     if status:
-        cursor.execute(
-            "SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC",
-            (status,)
-        )
-    else:
-        cursor.execute("SELECT * FROM jobs ORDER BY created_at DESC")
-    
-    rows = cursor.fetchall()
-    columns = [desc[0] for desc in cursor.description]
-    
-    jobs = []
-    for row in rows:
-        job = dict(zip(columns, row))
-        if job.get('config'):
-            job['config'] = json.loads(job['config'])
-        if job.get('metadata'):
-            job['metadata'] = json.loads(job['metadata'])
-        jobs.append(job)
-    
-    conn.close()
+        query = query.filter(Job.status == status)
+    jobs_query = query.order_by(Job.created_at.desc()).all()
+    jobs = [j.to_dict() for j in jobs_query]
     return {"jobs": jobs}
 
 
-@app.get("/api/jobs/{job_id}/status")
-async def get_job_status_endpoint(job_id: str):
-    """Récupère le statut d'un job."""
-    # Récupérer depuis la DB
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
-    row = cursor.fetchone()
-    
-    if not row:
-        conn.close()
+@app.get("/api/jobs/{job_id}")
+@app.get("/jobs/{job_id}")  # Frontend compatibility
+async def get_job(job_id: str, db: Session = Depends(get_db)):
+    """Récupère un job par son ID (frontend endpoint)."""
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
         raise HTTPException(status_code=404, detail="Job non trouvé")
     
-    columns = [desc[0] for desc in cursor.description]
-    job_db = dict(zip(columns, row))
-    conn.close()
-    
     # Si c'est un job Mistral API, récupérer le statut à jour
-    if job_db.get('job_type') == 'mistral_api':
+    if job.job_type == 'mistral_api':
         try:
             client = get_mistral_client()
             status_info = get_job_status(client, job_id)
             
-            # Mettre à jour la DB
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE jobs 
-                SET status = ?, fine_tuned_model = ?, error = ?, updated_at = ?
-                WHERE id = ?
-            """, (
-                status_info["status"],
-                status_info.get("fine_tuned_model"),
-                json.dumps(status_info.get("error")) if status_info.get("error") else None,
-                int(datetime.now().timestamp()),
-                job_id
-            ))
-            conn.commit()
-            conn.close()
+            # Map Mistral status (lowercase) to our status format
+            mistral_status = status_info["status"].lower()
+            status_map = {
+                "validated": "QUEUED",
+                "queued": "QUEUED",
+                "running": "RUNNING",
+                "succeeded": "SUCCEEDED",
+                "failed": "FAILED",
+                "cancelled": "CANCELLED",
+            }
+            mapped_status = status_map.get(mistral_status, mistral_status.upper())
             
-            return JobStatusResponse(**status_info)
+            # Mettre à jour la DB avec ORM
+            job.status = mapped_status
+            job.model_output_ref = status_info.get("fine_tuned_model")
+            if status_info.get("error"):
+                job.error_message = str(status_info.get("error"))
+            db.commit()
+            
+            # Return in format expected by frontend
+            job_dict = job.to_dict()
+            return {"job": job_dict}
+        except Exception as e:
+            # Retourner le statut de la DB en cas d'erreur
+            job_dict = job.to_dict()
+            return {"job": job_dict}
+    else:
+        job_dict = job.to_dict()
+        return {"job": job_dict}
+
+
+@app.get("/api/jobs/{job_id}/status")
+async def get_job_status_endpoint(job_id: str, db: Session = Depends(get_db)):
+    """Récupère le statut d'un job (legacy endpoint)."""
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    # Si c'est un job Mistral API, récupérer le statut à jour
+    if job.job_type == 'mistral_api':
+        try:
+            client = get_mistral_client()
+            status_info = get_job_status(client, job_id)
+            
+            # Map Mistral status (lowercase) to our status format
+            mistral_status = status_info["status"].lower()
+            status_map = {
+                "validated": "QUEUED",
+                "queued": "QUEUED",
+                "running": "RUNNING",
+                "succeeded": "SUCCEEDED",
+                "failed": "FAILED",
+                "cancelled": "CANCELLED",
+            }
+            mapped_status = status_map.get(mistral_status, mistral_status.upper())
+            
+            # Mettre à jour la DB avec ORM
+            job.status = mapped_status
+            job.model_output_ref = status_info.get("fine_tuned_model")
+            if status_info.get("error"):
+                job.error_message = str(status_info.get("error"))
+            db.commit()
+            
+            return JobStatusResponse(
+                id=job.id,
+                status=mapped_status,
+                model=job.model,
+                created_at=job.created_at,
+                fine_tuned_model=job.model_output_ref,
+                error=job.error_message,
+                progress=job.progress,
+            )
         except Exception as e:
             # Retourner le statut de la DB en cas d'erreur
             return JobStatusResponse(
-                id=job_db['id'],
-                status=job_db['status'],
-                model=job_db['model'],
-                created_at=job_db['created_at'],
-                fine_tuned_model=job_db.get('fine_tuned_model'),
-                error=job_db.get('error'),
+                id=job.id,
+                status=job.status,
+                model=job.model,
+                created_at=job.created_at,
+                fine_tuned_model=job.model_output_ref,
+                error=job.error_message,
+                progress=job.progress,
             )
     else:
         return JobStatusResponse(
-            id=job_db['id'],
-            status=job_db['status'],
-            model=job_db['model'],
-            created_at=job_db['created_at'],
-            fine_tuned_model=job_db.get('fine_tuned_model'),
-            error=job_db.get('error'),
+            id=job.id,
+            status=job.status,
+            model=job.model,
+            created_at=job.created_at,
+            fine_tuned_model=job.model_output_ref,
+            error=job.error_message,
+            progress=job.progress,
         )
 
 
@@ -522,49 +635,94 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     """
     WebSocket pour le monitoring temps réel d'un job.
     
-    Envoie des mises à jour de statut toutes les 5 secondes.
+    Envoie des mises à jour de statut et logs en temps réel.
+    Reads from Redis pub/sub for logs and polls DB for status.
     """
     await manager.connect(websocket, job_id)
     
+    # Get database session for this connection
+    from db.database import SessionLocal
+    db = SessionLocal()
+    
+    # Try to subscribe to Redis pub/sub for logs
+    redis_sub = None
+    try:
+        import redis
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        redis_sub = redis_client.pubsub()
+        redis_sub.subscribe(f"job_logs:{job_id}")
+    except Exception as e:
+        logger.debug(f"Redis not available for log streaming: {e}")
+    
     try:
         while True:
+            # Check for new logs from Redis pub/sub
+            if redis_sub:
+                try:
+                    message = redis_sub.get_message(timeout=0.1)
+                    if message and message["type"] == "message":
+                        log_data = json.loads(message["data"])
+                        await manager.send_personal_message({
+                            "type": "log",
+                            "job_id": job_id,
+                            "timestamp": log_data["timestamp"],
+                            "level": log_data["level"],
+                            "message": log_data["message"],
+                        }, job_id)
+                except Exception as e:
+                    logger.debug(f"Error reading Redis message: {e}")
+            
             # Récupérer le statut
             try:
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
-                row = cursor.fetchone()
+                job = db.query(Job).filter(Job.id == job_id).first()
                 
-                if row:
-                    columns = [desc[0] for desc in cursor.description]
-                    job = dict(zip(columns, row))
-                    
+                if job:
                     # Si c'est un job Mistral, récupérer le statut à jour
-                    if job.get('job_type') == 'mistral_api':
+                    if job.job_type == 'mistral_api':
                         client = get_mistral_client()
                         status_info = get_job_status(client, job_id)
+                        
+                        # Map Mistral status (lowercase) to our status format
+                        mistral_status = status_info["status"].lower()
+                        # Mistral uses: validated, queued, running, succeeded, failed, cancelled
+                        # Our states are: PENDING, QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED
+                        status_map = {
+                            "validated": "QUEUED",
+                            "queued": "QUEUED",
+                            "running": "RUNNING",
+                            "succeeded": "SUCCEEDED",
+                            "failed": "FAILED",
+                            "cancelled": "CANCELLED",
+                        }
+                        mapped_status = status_map.get(mistral_status, mistral_status.upper())
+                        
+                        # Mettre à jour la DB avec ORM
+                        job.status = mapped_status
+                        job.model_output_ref = status_info.get("fine_tuned_model")
+                        if status_info.get("error"):
+                            job.error_message = str(status_info.get("error"))
+                        db.commit()
                         
                         await manager.send_personal_message({
                             "type": "status_update",
                             "job_id": job_id,
-                            "status": status_info["status"],
+                            "status": mapped_status,
                             "fine_tuned_model": status_info.get("fine_tuned_model"),
                             "error": status_info.get("error"),
                             "timestamp": datetime.now().isoformat(),
                         }, job_id)
                         
                         # Si terminé, arrêter le polling
-                        if status_info["status"] in ["succeeded", "failed", "cancelled"]:
+                        if mapped_status in ["SUCCEEDED", "FAILED", "CANCELLED"]:
                             break
                     else:
                         await manager.send_personal_message({
                             "type": "status_update",
                             "job_id": job_id,
-                            "status": job['status'],
+                            "status": job.status,
                             "timestamp": datetime.now().isoformat(),
                         }, job_id)
-                
-                conn.close()
             except Exception as e:
                 await manager.send_personal_message({
                     "type": "error",
@@ -575,6 +733,149 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             
     except WebSocketDisconnect:
         manager.disconnect(job_id)
+    finally:
+        if redis_sub:
+            redis_sub.unsubscribe(f"job_logs:{job_id}")
+            redis_sub.close()
+        db.close()
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+@app.post("/jobs/{job_id}/cancel")  # Frontend compatibility
+async def cancel_job(job_id: str, db: Session = Depends(get_db)):
+    """Annule un job en cours."""
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    # Vérifier si le job peut être annulé
+    if job.status in ["succeeded", "failed", "cancelled"]:
+        raise HTTPException(status_code=400, detail=f"Le job est déjà {job.status}")
+    
+    # Marquer comme annulé
+    job.status = "cancelled"
+    job.finished_at = int(datetime.now().timestamp())
+    db.commit()
+    
+    # Revoke Celery task if running
+    use_celery = os.getenv("REDIS_URL") or os.getenv("CELERY_BROKER_URL")
+    if use_celery:
+        try:
+            from workers.celery_app import celery_app
+            celery_app.control.revoke(job_id, terminate=True)
+        except Exception as e:
+            logger.warning(f"Failed to revoke Celery task: {e}")
+    
+    return {"message": "Job annulé", "job_id": job_id, "status": "cancelled"}
+
+
+@app.get("/api/jobs/{job_id}/logs")
+async def get_job_logs_endpoint(
+    job_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    level: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Récupère les logs d'un job avec pagination."""
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    logs = get_job_logs(db, job_id, limit=limit, offset=offset, level=level)
+    return {"logs": logs, "total": len(logs)}
+
+
+# Background task fallback (for when Celery is not available)
+async def _poll_job_status_background(job_id: str):
+    """Background task to poll job status (fallback when Celery unavailable)."""
+    from db.database import SessionLocal
+    db = SessionLocal()
+    try:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            return
+        
+        if job.job_type == "mistral_api":
+            client = get_mistral_client()
+            status_info = get_job_status(client, job_id)
+            job.status = status_info["status"]
+            job.model_output_ref = status_info.get("fine_tuned_model")
+            if status_info.get("error"):
+                job.error_message = str(status_info.get("error"))
+            db.commit()
+    finally:
+        db.close()
+
+
+# Authentication endpoints
+@app.post("/api/auth/login")
+async def login(
+    email: str,
+    password: str,
+    db: Session = Depends(get_db),
+):
+    """Login endpoint to get JWT token."""
+    auth_required = os.getenv("AUTH_REQUIRED", "false").lower() in ("true", "1", "yes")
+    if not auth_required:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Authentication is disabled",
+        )
+    
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not verify_password(password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+    
+    access_token = create_access_token(data={"sub": user.id, "email": user.email, "role": user.role})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {"id": user.id, "email": user.email, "role": user.role},
+    }
+
+
+@app.post("/api/auth/register")
+async def register(
+    email: str,
+    password: str,
+    db: Session = Depends(get_db),
+):
+    """Register a new user."""
+    auth_required = os.getenv("AUTH_REQUIRED", "false").lower() in ("true", "1", "yes")
+    if not auth_required:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Authentication is disabled",
+        )
+    
+    existing = db.query(User).filter(User.email == email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+    
+    import time
+    user = User(
+        id=f"user_{int(time.time())}_{email[:8]}",
+        email=email,
+        password_hash=hash_password(password),
+        role="member",
+        created_at=int(time.time()),
+    )
+    db.add(user)
+    db.commit()
+    
+    access_token = create_access_token(data={"sub": user.id, "email": user.email, "role": user.role})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {"id": user.id, "email": user.email, "role": user.role},
+    }
 
 
 # Inference endpoints
