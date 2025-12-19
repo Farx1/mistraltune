@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  backend:
+    name: Backend Tests & Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run Ruff (linting)
+        run: |
+          ruff check src/ tests/
+        continue-on-error: false
+      
+      - name: Run Ruff format check
+        run: |
+          ruff format --check src/ tests/
+        continue-on-error: false
+      
+      - name: Run Black (formatting check)
+        run: |
+          black --check src/ tests/
+        continue-on-error: false
+      
+      - name: Run tests
+        run: |
+          pytest tests/ -v
+        env:
+          DEMO_MODE: 1
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY || 'test-key' }}
+      
+      - name: Verify test collection
+        run: |
+          TEST_COUNT=$(pytest --collect-only -q 2>/dev/null | grep -E "test session starts" -A 2 | tail -1 | grep -oE '[0-9]+' | head -1 || echo "0")
+          if [ -z "$TEST_COUNT" ] || [ "$TEST_COUNT" -lt 5 ]; then
+            echo "Error: Only $TEST_COUNT tests found. Expected at least 5."
+            exit 1
+          fi
+          echo "✓ Found $TEST_COUNT tests"
+  
+  frontend:
+    name: Frontend Lint & Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      
+      - name: Run ESLint
+        working-directory: frontend
+        run: npm run lint
+      
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_WS_URL: ws://localhost:8000
+

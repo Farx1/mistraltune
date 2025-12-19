@@ -1,0 +1,20 @@
+{"instruction":"Réponds brièvement : Qu'est-ce que le PTO ?", "input":"", "output":"Le PTO est un congé payé global qui regroupe vacances et absences rémunérées."}
+{"instruction":"Define KPI in one sentence.", "input":"", "output":"A KPI is a measurable indicator that tracks progress toward a specific objective."}
+{"instruction":"Donne 2 exemples d'avantages sociaux en France.", "input":"", "output":"Tickets restaurant ; mutuelle d'entreprise."}
+{"instruction":"What is the difference between SaaS and PaaS?", "input":"", "output":"SaaS provides ready-to-use applications while PaaS provides platforms for developing applications."}
+{"instruction":"Explique le concept de burn rate en startup.", "input":"", "output":"Le burn rate est le taux de consommation mensuel de trésorerie d'une startup avant d'atteindre la rentabilité."}
+{"instruction":"How do you calculate customer lifetime value?", "input":"", "output":"CLV = Average Order Value × Purchase Frequency × Customer Lifespan."}
+{"instruction":"Qu'est-ce qu'un OKR ?", "input":"", "output":"Un OKR est un objectif avec des résultats clés mesurables pour aligner les équipes sur des buts communs."}
+{"instruction":"Define MVP in product development.", "input":"", "output":"MVP stands for Minimum Viable Product - the simplest version with core features to validate market demand."}
+{"instruction":"Explique la différence entre churn et retention.", "input":"", "output":"Le churn est le taux de départ des clients tandis que la retention mesure le maintien de la clientèle."}
+{"instruction":"What is A/B testing used for?", "input":"", "output":"A/B testing compares two versions to determine which performs better based on user behavior and metrics."}
+{"instruction":"Qu'est-ce que le CAC en marketing ?", "input":"", "output":"Le CAC (Customer Acquisition Cost) est le coût moyen pour acquérir un nouveau client."}
+{"instruction":"How do you measure product-market fit?", "input":"", "output":"Product-market fit is measured through user engagement, retention rates, and organic growth indicators."}
+{"instruction":"Explique le concept de runway en finance startup.", "input":"", "output":"Le runway est la durée de survie d'une startup avec ses fonds actuels avant de devoir lever de nouveaux fonds."}
+{"instruction":"What is the purpose of user personas?", "input":"", "output":"User personas help teams understand target users' needs, behaviors, and motivations for better product design."}
+{"instruction":"Qu'est-ce qu'un pivot en startup ?", "input":"", "output":"Un pivot est un changement de direction stratégique majeur pour adapter le modèle économique ou le produit."}
+{"instruction":"Define agile methodology in software development.", "input":"", "output":"Agile is an iterative approach emphasizing collaboration, flexibility, and rapid delivery of working software."}
+{"instruction":"Explique la différence entre B2B et B2C.", "input":"", "output":"B2B vend aux entreprises tandis que B2C vend directement aux consommateurs finaux."}
+{"instruction":"What is the purpose of a wireframe?", "input":"", "output":"A wireframe is a visual guide showing the structure and layout of a webpage or app interface."}
+{"instruction":"Qu'est-ce que le NPS (Net Promoter Score) ?", "input":"", "output":"Le NPS mesure la probabilité qu'un client recommande votre produit sur une échelle de 0 à 10."}
+{"instruction":"How do you prioritize features in product development?", "input":"", "output":"Features are prioritized based on user impact, business value, technical feasibility, and strategic alignment."}
