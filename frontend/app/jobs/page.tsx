@@ -1,237 +1,112 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Navbar } from "@/components/layout/navbar";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { apiClient, Job } from "@/lib/api";
-import { 
-  Zap, 
-  Plus,
-  Search,
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  Clock,
-  Filter
-} from "lucide-react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
+import { apiClient, Job } from "@/lib/api";
+import { PageShell } from "@/components/shared/page-shell";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate } from "@/lib/format";
+import { ArrowUpRight, Plus, Search } from "lucide-react";
 
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [filteredJobs, setFilteredJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [err, setErr] = useState<string | null>(null);
+  const [q, setQ] = useState("");
 
   useEffect(() => {
-    loadJobs();
-    const interval = setInterval(loadJobs, 10000);
-    return () => clearInterval(interval);
+    (async () => {
+      try {
+        setErr(null);
+        setLoading(true);
+        const res = await apiClient.listJobs();
+        setJobs(res.jobs ?? []);
+      } catch (e: any) {
+        setErr(String(e?.message ?? e));
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  useEffect(() => {
-    filterJobs();
-  }, [jobs, searchQuery, statusFilter]);
-
-  const loadJobs = async () => {
-    try {
-      const response = await apiClient.listJobs();
-      setJobs(response.jobs);
-    } catch (error) {
-      console.error("Error loading jobs:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const filterJobs = () => {
-    let filtered = jobs;
-
-    if (statusFilter !== "all") {
-      filtered = filtered.filter((job) => job.status === statusFilter);
-    }
-
-    if (searchQuery) {
-      filtered = filtered.filter(
-        (job) =>
-          job.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          job.model.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    setFilteredJobs(filtered);
-  };
-
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; icon: any }> = {
-      succeeded: { variant: "default", icon: CheckCircle2 },
-      failed: { variant: "destructive", icon: XCircle },
-      running: { variant: "secondary", icon: Loader2 },
-      queued: { variant: "outline", icon: Clock },
-      validating_files: { variant: "outline", icon: Loader2 },
-    };
-
-    const config = variants[status] || { variant: "outline" as const, icon: Clock };
-    const Icon = config.icon || Clock;
-
-    return (
-      <Badge variant={config.variant} className="gap-1">
-        <Icon className="h-3 w-3" />
-        {status}
-      </Badge>
-    );
-  };
-
-  const statusCounts = {
-    all: jobs.length,
-    succeeded: jobs.filter((j) => j.status === "succeeded").length,
-    running: jobs.filter((j) => j.status === "running" || j.status === "queued" || j.status === "validating_files").length,
-    failed: jobs.filter((j) => j.status === "failed").length,
-  };
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    const arr = s
+      ? jobs.filter((j) => `${j.id} ${j.model} ${j.status} ${j.fine_tuned_model ?? ""}`.toLowerCase().includes(s))
+      : jobs;
+    return arr.slice().sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
+  }, [jobs, q]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
-      
-      <main className="container py-8">
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Jobs de Fine-tuning</h1>
-            <p className="text-muted-foreground">
-              Gérez et suivez vos jobs de fine-tuning
-            </p>
+    <PageShell
+      title="Jobs"
+      subtitle="Browse all fine-tuning runs."
+      right={
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="pl-9 w-[260px]" />
           </div>
-          <Link href="/jobs/new">
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Nouveau job
-            </Button>
-          </Link>
+          <Button asChild className="gap-2">
+            <Link href="/jobs/new">
+              <Plus className="h-4 w-4" /> New job
+            </Link>
+          </Button>
         </div>
-
-        {/* Filters */}
-        <Card className="mb-6">
-          <CardContent className="pt-6">
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1 relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Rechercher par ID ou modèle..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <div className="flex gap-2">
-                {["all", "succeeded", "running", "failed"].map((status) => (
-                  <Button
-                    key={status}
-                    variant={statusFilter === status ? "default" : "outline"}
-                    onClick={() => setStatusFilter(status)}
-                    className="capitalize"
-                  >
-                    {status === "all" ? "Tous" : status}
-                    {statusCounts[status as keyof typeof statusCounts] > 0 && (
-                      <Badge variant="secondary" className="ml-2">
-                        {statusCounts[status as keyof typeof statusCounts]}
-                      </Badge>
-                    )}
-                  </Button>
-                ))}
-              </div>
+      }
+    >
+      <Card className="overflow-hidden">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Runs</CardTitle>
+          <div className="text-sm text-muted-foreground">{filtered.length} item(s)</div>
+        </CardHeader>
+        <CardContent>
+          {err ? (
+            <div className="mb-4 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {err}
             </div>
-          </CardContent>
-        </Card>
+          ) : null}
 
-        {/* Jobs List */}
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : filteredJobs.length === 0 ? (
-          <Card>
-            <CardContent className="py-16 text-center">
-              <Zap className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-lg font-semibold mb-2">Aucun job trouvé</h3>
-              <p className="text-muted-foreground mb-4">
-                {jobs.length === 0
-                  ? "Créez votre premier job de fine-tuning"
-                  : "Aucun job ne correspond à vos filtres"}
-              </p>
-              {jobs.length === 0 && (
-                <Link href="/jobs/new">
-                  <Button>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Créer un job
-                  </Button>
-                </Link>
-              )}
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-4">
-            {filteredJobs.map((job, index) => (
-              <motion.div
-                key={job.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: index * 0.05 }}
-              >
-                <Card className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <span className="font-semibold text-lg">{job.model}</span>
-                          {getStatusBadge(job.status)}
-                          <Badge variant="outline">{job.job_type}</Badge>
-                        </div>
-                        <div className="text-sm text-muted-foreground space-y-1">
-                          <div>ID: {job.id}</div>
-                          <div>
-                            Créé le {new Date(job.created_at * 1000).toLocaleString()}
-                          </div>
-                          {job.fine_tuned_model && (
-                            <div className="text-primary font-medium">
-                              Modèle fine-tuné: {job.fine_tuned_model}
-                            </div>
-                          )}
-                          {job.error && (
-                            <div className="text-destructive">
-                              Erreur: {job.error}
-                            </div>
-                          )}
-                        </div>
-                        {job.config && (
-                          <div className="mt-3 flex gap-4 text-sm">
-                            <span>LR: {job.config.learning_rate}</span>
-                            <span>Epochs: {job.config.epochs}</span>
-                            {job.config.batch_size && (
-                              <span>Batch: {job.config.batch_size}</span>
-                            )}
-                          </div>
-                        )}
+          {loading ? (
+            <div className="text-sm text-muted-foreground">Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div className="rounded-2xl border bg-background/50 p-6 text-center text-muted-foreground">
+              No jobs found.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filtered.map((j) => (
+                <div key={j.id} className="rounded-2xl border bg-background/60 p-4 hover:bg-accent/40 transition">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-semibold truncate">{j.model}</div>
+                        <StatusBadge status={j.status} />
                       </div>
-                      <div className="flex gap-2">
-                        <Link href={`/jobs/${job.id}`}>
-                          <Button variant="outline" size="sm">
-                            Détails
-                          </Button>
-                        </Link>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        ID: <span className="font-mono">{j.id.slice(0, 10)}…</span> • Created: {formatDate(j.created_at)}
                       </div>
+                      {j.fine_tuned_model ? (
+                        <div className="mt-1 text-sm text-muted-foreground">
+                          Fine-tuned: <span className="font-mono">{j.fine_tuned_model}</span>
+                        </div>
+                      ) : null}
                     </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
-        )}
-      </main>
-    </div>
+                    <Button asChild variant="ghost" className="gap-2">
+                      <Link href={`/jobs/${j.id}`}>
+                        Details <ArrowUpRight className="h-4 w-4 opacity-70" />
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </PageShell>
   );
 }
-

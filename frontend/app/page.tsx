@@ -1,274 +1,239 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Navbar } from "@/components/layout/navbar";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { apiClient, Job, Dataset } from "@/lib/api";
-import { 
-  Zap, 
-  Database, 
-  TrendingUp, 
-  Clock,
-  CheckCircle2,
-  XCircle,
-  Loader2
-} from "lucide-react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
+import { apiClient, Dataset, Job } from "@/lib/api";
+import { PageShell } from "@/components/shared/page-shell";
+import { BentoGrid, BentoCard } from "@/components/aceternity/bento";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { formatDate } from "@/lib/format";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { ArrowUpRight, Database, Plus, RefreshCcw, Search } from "lucide-react";
 
-export default function Dashboard() {
+export default function DashboardPage() {
+  const reduceMotion = useReducedMotion() ?? false;
+
   const [jobs, setJobs] = useState<Job[]>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    totalJobs: 0,
-    activeJobs: 0,
-    completedJobs: 0,
-    totalDatasets: 0,
-  });
+  const [softLoading, setSoftLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
 
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadData = async () => {
+  const load = async (hard: boolean) => {
     try {
-      const [jobsRes, datasetsRes] = await Promise.all([
-        apiClient.listJobs(),
-        apiClient.listDatasets(),
-      ]);
-
-      setJobs(jobsRes.jobs);
-      setDatasets(datasetsRes.datasets);
-
-      const activeJobs = jobsRes.jobs.filter(
-        (j) => j.status === "validating_files" || j.status === "queued" || j.status === "running"
-      ).length;
-      const completedJobs = jobsRes.jobs.filter(
-        (j) => j.status === "succeeded"
-      ).length;
-
-      setStats({
-        totalJobs: jobsRes.jobs.length,
-        activeJobs,
-        completedJobs,
-        totalDatasets: datasetsRes.datasets.length,
-      });
-    } catch (error) {
-      console.error("Error loading data:", error);
+      setError(null);
+      hard ? setLoading(true) : setSoftLoading(true);
+      const [j, d] = await Promise.all([apiClient.listJobs(), apiClient.listDatasets()]);
+      setJobs(j.jobs ?? []);
+      setDatasets(d.datasets ?? []);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
     } finally {
       setLoading(false);
+      setSoftLoading(false);
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; icon: any }> = {
-      succeeded: { variant: "default", icon: CheckCircle2 },
-      failed: { variant: "destructive", icon: XCircle },
-      running: { variant: "secondary", icon: Loader2 },
-      queued: { variant: "outline", icon: Clock },
-      validating_files: { variant: "outline", icon: Loader2 },
-    };
+  useEffect(() => {
+    load(true);
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      load(false);
+    }, 10000);
+    return () => clearInterval(t);
+  }, []);
 
-    const config = variants[status] || { variant: "outline" as const, icon: Clock };
-    const Icon = config.icon || Clock;
+  const stats = useMemo(() => {
+    const total = jobs.length;
+    const active = jobs.filter((x) => ["queued", "running", "validating_files"].includes(x.status)).length;
+    const ok = jobs.filter((x) => x.status === "succeeded").length;
+    const fail = jobs.filter((x) => x.status === "failed").length;
+    const successRate = total ? Math.round((ok / total) * 100) : 0;
 
-    return (
-      <Badge variant={config.variant} className="gap-1">
-        <Icon className="h-3 w-3" />
-        {status}
-      </Badge>
-    );
-  };
+    const filtered =
+      q.trim().length === 0
+        ? jobs
+        : jobs.filter((j) => `${j.id} ${j.model} ${j.status} ${j.fine_tuned_model ?? ""}`.toLowerCase().includes(q.toLowerCase()));
 
-  const recentJobs = jobs.slice(0, 5);
+    const recent = filtered
+      .slice()
+      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))
+      .slice(0, 6);
+
+    return { total, active, ok, fail, successRate, recent, filteredCount: filtered.length };
+  }, [jobs, q]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
-      
-      <main className="container py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Vue d'ensemble de vos jobs de fine-tuning et datasets
-          </p>
+    <PageShell
+      title="Studio Dashboard"
+      subtitle="A clean, Mistral-themed control center for jobs, datasets and quick actions."
+      right={
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search jobs…" className="pl-9 w-[280px]" />
+          </div>
+
+          <Button variant="outline" className="gap-2 border-primary/25 hover:border-primary/40" onClick={() => load(false)} disabled={loading || softLoading}>
+            <RefreshCcw className={softLoading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+            Refresh
+          </Button>
+
+          <Button asChild className="gap-2">
+            <Link href="/jobs/new">
+              <Plus className="h-4 w-4" /> New job
+            </Link>
+          </Button>
         </div>
-
-        {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Jobs</CardTitle>
-                <Zap className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.totalJobs}</div>
-                <p className="text-xs text-muted-foreground">
-                  Tous les jobs créés
-                </p>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.1 }}
-          >
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Jobs Actifs</CardTitle>
-                <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.activeJobs}</div>
-                <p className="text-xs text-muted-foreground">
-                  En cours d'exécution
-                </p>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.2 }}
-          >
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Jobs Terminés</CardTitle>
-                <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.completedJobs}</div>
-                <p className="text-xs text-muted-foreground">
-                  Avec succès
-                </p>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.3 }}
-          >
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Datasets</CardTitle>
-                <Database className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats.totalDatasets}</div>
-                <p className="text-xs text-muted-foreground">
-                  Fichiers uploadés
-                </p>
-              </CardContent>
-            </Card>
-          </motion.div>
+      }
+    >
+      {error ? (
+        <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
         </div>
+      ) : null}
 
-        {/* Recent Jobs */}
-        <Card className="mb-8">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Jobs Récents</CardTitle>
-                <CardDescription>
-                  Derniers jobs de fine-tuning créés
-                </CardDescription>
-              </div>
-              <Link href="/jobs">
-                <Button variant="outline">Voir tout</Button>
-              </Link>
+      <BentoGrid className="mt-4">
+        <BentoCard className="lg:col-span-3" title="Total jobs" description="All created runs">
+          <div className="text-3xl font-bold">{loading ? "—" : stats.total}</div>
+        </BentoCard>
+
+        <BentoCard className="lg:col-span-3" title="Active" description="queued / running / validating">
+          <div className="text-3xl font-bold">{loading ? "—" : stats.active}</div>
+        </BentoCard>
+
+        <BentoCard className="lg:col-span-3" title="Succeeded" description="completed successfully">
+          <div className="text-3xl font-bold">{loading ? "—" : stats.ok}</div>
+        </BentoCard>
+
+        <BentoCard className="lg:col-span-3" title="Datasets" description="available files">
+          <div className="text-3xl font-bold">{loading ? "—" : datasets.length}</div>
+        </BentoCard>
+
+        <BentoCard className="lg:col-span-5" title="Health" description="quick stability signal">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Success rate</span>
+            <span className="font-semibold">{loading ? "—" : `${stats.successRate}%`}</span>
+          </div>
+          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${stats.successRate}%` }} />
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border bg-background/50 p-3">
+              <div className="text-xs text-muted-foreground">Failed</div>
+              <div className="mt-1 text-lg font-semibold">{loading ? "—" : stats.fail}</div>
             </div>
+            <div className="rounded-2xl border bg-background/50 p-3">
+              <div className="text-xs text-muted-foreground">Filtered</div>
+              <div className="mt-1 text-lg font-semibold">{loading ? "—" : stats.filteredCount}</div>
+            </div>
+          </div>
+        </BentoCard>
+
+        <BentoCard className="lg:col-span-7" title="Quick actions" description="fast navigation">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Link href="/jobs/new" className="rounded-2xl border bg-background/60 p-4 hover:bg-accent/40 transition">
+              <div className="font-semibold">Create a new job</div>
+              <div className="text-sm text-muted-foreground mt-1">Configure model + dataset and launch.</div>
+            </Link>
+            <Link href="/datasets" className="rounded-2xl border bg-background/60 p-4 hover:bg-accent/40 transition">
+              <div className="font-semibold">Manage datasets</div>
+              <div className="text-sm text-muted-foreground mt-1">Upload JSONL and reuse across runs.</div>
+            </Link>
+          </div>
+        </BentoCard>
+      </BentoGrid>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-12">
+        <Card className="lg:col-span-8 overflow-hidden">
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
+            <div>
+              <CardTitle>Recent jobs</CardTitle>
+              <div className="text-sm text-muted-foreground">Status-focused list (top 6)</div>
+            </div>
+            <Button asChild variant="outline" className="border-primary/25 hover:border-primary/40">
+              <Link href="/jobs">View all</Link>
+            </Button>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : recentJobs.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                Aucun job pour le moment. Créez votre premier job de fine-tuning!
+              <div className="text-sm text-muted-foreground">Loading…</div>
+            ) : stats.recent.length === 0 ? (
+              <div className="rounded-2xl border bg-background/50 p-6 text-center text-muted-foreground">
+                No jobs yet.
               </div>
             ) : (
-              <div className="space-y-4">
-                {recentJobs.map((job) => (
-                  <div
-                    key={job.id}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium">{job.model}</span>
-                        {getStatusBadge(job.status)}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        ID: {job.id.slice(0, 8)}... | Créé le{" "}
-                        {new Date(job.created_at * 1000).toLocaleDateString()}
-                      </div>
-                      {job.fine_tuned_model && (
-                        <div className="text-sm text-muted-foreground mt-1">
-                          Modèle: {job.fine_tuned_model}
+              <div className="space-y-3">
+                <AnimatePresence initial={false}>
+                  {stats.recent.map((j) => (
+                    <motion.div
+                      key={j.id}
+                      initial={reduceMotion ? undefined : { opacity: 0, y: 10 }}
+                      animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+                      exit={reduceMotion ? undefined : { opacity: 0, y: 10 }}
+                      transition={{ duration: 0.2 }}
+                      className="rounded-2xl border bg-background/60 p-4 hover:bg-accent/40 transition"
+                    >
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="font-semibold truncate">{j.model}</div>
+                            <StatusBadge status={j.status} />
+                          </div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            ID: <span className="font-mono">{j.id.slice(0, 10)}…</span> • Created: {formatDate(j.created_at)}
+                          </div>
                         </div>
-                      )}
-                    </div>
-                    <Link href={`/jobs/${job.id}`}>
-                      <Button variant="ghost" size="sm">
-                        Voir détails
-                      </Button>
-                    </Link>
-                  </div>
-                ))}
+                        <Button asChild variant="ghost" className="gap-2">
+                          <Link href={`/jobs/${j.id}`}>
+                            Details <ArrowUpRight className="h-4 w-4 opacity-70" />
+                          </Link>
+                        </Button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Quick Actions */}
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Créer un nouveau job</CardTitle>
-              <CardDescription>
-                Lancez un fine-tuning avec l'API Mistral
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link href="/jobs/new">
-                <Button className="w-full">Créer un job</Button>
-              </Link>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Uploader un dataset</CardTitle>
-              <CardDescription>
-                Ajoutez un nouveau fichier JSONL pour l'entraînement
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link href="/datasets">
-                <Button variant="outline" className="w-full">
-                  Gérer les datasets
+        <Card className="lg:col-span-4 overflow-hidden">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Database className="h-4 w-4" /> Datasets
+            </CardTitle>
+            <div className="text-sm text-muted-foreground">Quick preview</div>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="text-sm text-muted-foreground">Loading…</div>
+            ) : datasets.length === 0 ? (
+              <div className="rounded-2xl border bg-background/50 p-6 text-center text-muted-foreground">
+                No datasets yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {datasets.slice(0, 5).map((d: any) => (
+                  <div key={d.id ?? d.filename} className="rounded-2xl border bg-background/60 p-4">
+                    <div className="font-semibold truncate">{d.filename ?? d.name ?? "dataset"}</div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      {d.created_at ? `Created: ${formatDate(d.created_at)}` : "—"}
+                    </div>
+                  </div>
+                ))}
+                <Button asChild variant="outline" className="w-full border-primary/25 hover:border-primary/40">
+                  <Link href="/datasets">Open datasets</Link>
                 </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        </div>
-      </main>
-    </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </PageShell>
   );
 }
