@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from mistralai import Mistral
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 import logging
 
@@ -258,7 +259,7 @@ async def health(db: Session = Depends(get_db)):
     
     # Check database connectivity
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         health_status["database"] = "connected"
     except Exception as e:
         health_status["database"] = f"error: {str(e)}"

@@ -3,7 +3,7 @@ Smoke test: dataset parsing + tokenization + one forward pass on small batch.
 """
 
 import pytest
-import torch
+torch = pytest.importorskip("torch")
 import tempfile
 import os
 from pathlib import Path
@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from transformers import AutoTokenizer
+AutoTokenizer = pytest.importorskip("transformers").AutoTokenizer
 from utils.data_io import build_hf_dataset, format_instruction
 from utils.seed import set_seed
 
