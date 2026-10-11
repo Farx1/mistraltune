@@ -366,7 +366,7 @@ async def upload_dataset_endpoint(file: UploadFile = File(...), db: Session = De
         with open(temp_path, 'rb') as f:
             file_data = client.files.upload(
                 file={
-                    "file_name": display_name,
+                    "file_name": file.filename,
                     "content": f,
                 }
             )
