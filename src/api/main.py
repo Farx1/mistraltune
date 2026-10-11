@@ -12,6 +12,7 @@ import os
 import json
 import asyncio
 import sys
+import uuid
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -325,6 +326,9 @@ async def get_metrics():
 
 
 # Datasets endpoints
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
 @app.post("/api/datasets/upload")
 @app.post("/datasets/upload")  # Frontend compatibility
 async def upload_dataset_endpoint(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -334,14 +338,18 @@ async def upload_dataset_endpoint(file: UploadFile = File(...), db: Session = De
     Returns:
         ID du fichier uploadé et statistiques
     """
-    if not file.filename.endswith('.jsonl'):
+    # Nom client = affichage uniquement; jamais utilisé comme chemin (path traversal)
+    display_name = Path(file.filename or "").name
+    if Path(display_name).suffix.lower() != ".jsonl":
         raise HTTPException(status_code=400, detail="Le fichier doit être au format .jsonl")
     
-    # Sauvegarder temporairement
-    temp_path = Path(f"data/uploads/{file.filename}")
-    temp_path.parent.mkdir(parents=True, exist_ok=True)
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"Fichier trop volumineux (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
     
-    content = await file.read()
+    # Sauvegarder temporairement
+    temp_path = Path("data/uploads") / f"{uuid.uuid4().hex}.jsonl"
+    temp_path.parent.mkdir(parents=True, exist_ok=True)
     with open(temp_path, 'wb') as f:
         f.write(content)
     
@@ -358,7 +366,7 @@ async def upload_dataset_endpoint(file: UploadFile = File(...), db: Session = De
         with open(temp_path, 'rb') as f:
             file_data = client.files.upload(
                 file={
-                    "file_name": file.filename,
+                    "file_name": display_name,
                     "content": f,
                 }
             )
@@ -371,13 +379,13 @@ async def upload_dataset_endpoint(file: UploadFile = File(...), db: Session = De
         
         # Upload to storage (S3 or local)
         storage_client = get_storage_client()
-        storage_key = f"{file_id}/{file.filename}"
+        storage_key = f"{file_id}/{temp_path.name}"
         s3_key = storage_client.upload_file(temp_path, storage_key, bucket_type="datasets")
         
         # Sauvegarder dans la DB avec ORM
         dataset = Dataset(
             id=file_id,
-            filename=file.filename,
+            filename=display_name,
             file_hash=file_hash,
             size_bytes=len(content),
             uploaded_at=uploaded_at,
@@ -393,7 +401,7 @@ async def upload_dataset_endpoint(file: UploadFile = File(...), db: Session = De
         
         return {
             "file_id": file_id,
-            "filename": file.filename,
+            "filename": display_name,
             "num_samples": num_lines,
             "status": "uploaded"
         }

@@ -51,7 +51,7 @@ export default function DatasetsPage() {
       subtitle="Upload and manage training files."
       right={
         <label className="inline-flex cursor-pointer items-center gap-2">
-          <input type="file" className="hidden" accept=".jsonl,.json,.txt" onChange={(e) => onUpload(e.target.files?.[0])} />
+          <input type="file" className="hidden" accept=".jsonl" onChange={(e) => onUpload(e.target.files?.[0])} />
           <Button className="gap-2" disabled={uploading}>
             <Upload className="h-4 w-4" />
             {uploading ? "Uploading…" : "Upload"}
