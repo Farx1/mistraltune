@@ -99,8 +99,8 @@ def build_hf_dataset(train_file: str, eval_file: str) -> DatasetDict:
         eval_texts.append({'text': formatted_text})
     
     # Create datasets
-    train_dataset = Dataset.from_list(train_texts)
-    eval_dataset = Dataset.from_list(eval_texts)
+    train_dataset = HFDataset.from_list(train_texts)
+    eval_dataset = HFDataset.from_list(eval_texts)
     
     return DatasetDict({
         'train': train_dataset,
