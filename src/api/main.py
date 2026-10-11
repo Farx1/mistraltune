@@ -355,15 +355,7 @@ async def upload_dataset_endpoint(file: UploadFile = File(...), db: Session = De
     # Upload vers Mistral
     try:
         client = get_mistral_client()
-        with open(temp_path, 'rb') as f:
-            file_data = client.files.upload(
-                file={
-                    "file_name": file.filename,
-                    "content": f,
-                }
-            )
-        
-        file_id = file_data.id
+        file_id = upload_dataset(client, str(temp_path))
         uploaded_at = int(datetime.now().timestamp())
         
         # Compute file hash
