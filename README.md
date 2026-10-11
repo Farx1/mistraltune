@@ -5,8 +5,9 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-in%20development-orange.svg)](https://github.com/Farx1/mistraltune)
 
-> **⚠️ Projet en cours de développement**  
-> Ce projet est actuellement en phase de développement actif. Certaines fonctionnalités peuvent être incomplètes ou sujettes à des modifications.
+> **⚠️ Work in progress**  
+> Working today: dataset upload/validation and Mistral API fine-tuning jobs (backend + CLI).  
+> Not yet working: Playground and Comparison pages are UI placeholders, the frontend has no WebSocket client (job pages poll the REST API), local QLoRA is a standalone script only (the API returns `501` for `qlora_local`), and the frontend cannot be built from this repo yet (`frontend/lib/` is missing).
 
 A professional fine-tuning platform for Mistral AI models with support for both cloud-based API fine-tuning and local QLoRA training. Features a modern web dashboard for managing jobs, datasets, and comparing models.
 
@@ -17,10 +18,10 @@ A professional fine-tuning platform for Mistral AI models with support for both 
 MistralTune is a complete fine-tuning solution that demonstrates:
 
 - **Cloud-based fine-tuning** via Mistral AI's managed API (no GPU required)
-- **Local QLoRA fine-tuning** for full control and privacy (requires GPU)
-- **Professional web dashboard** built with Next.js for managing the entire fine-tuning workflow
-- **Real-time monitoring** with WebSocket support for job tracking
-- **Model comparison tools** to evaluate fine-tuned models against base models
+- **Local QLoRA fine-tuning** script for full control and privacy (requires GPU; not exposed through the API yet)
+- **Web dashboard** built with Next.js for datasets and jobs
+- **WebSocket endpoint** on the backend for job tracking (no frontend client yet)
+- **Model comparison** via the CLI script (`src/mistral_api_inference.py`); the dashboard page is a placeholder
 
 Built to showcase expertise in LLM fine-tuning, MLOps, and full-stack development.
 
@@ -29,7 +30,7 @@ Built to showcase expertise in LLM fine-tuning, MLOps, and full-stack developmen
 ## 🧰 Tech Stack
 
 - **Languages**: Python 3.10+, TypeScript
-- **Frameworks**: FastAPI, Next.js 15, React 19
+- **Frameworks**: FastAPI, Next.js 16, React 19
 - **AI / ML**: PyTorch, Transformers, PEFT (QLoRA), Mistral AI SDK
 - **Data / Storage**: SQLite, JSONL datasets
 - **Tools**: Uvicorn, WebSockets, shadcn/ui, Tailwind CSS, Framer Motion
@@ -45,11 +46,10 @@ Built to showcase expertise in LLM fine-tuning, MLOps, and full-stack developmen
 - **Web Dashboard**
   - Upload and validate JSONL datasets
   - Create and monitor fine-tuning jobs in real-time
-  - Playground for testing model inference
-  - Side-by-side model comparison with metrics
+  - Playground and Comparison pages (placeholders, not wired yet)
 
 - **Real-time Monitoring**
-  - WebSocket connections for live job status updates
+  - Backend WebSocket endpoint for job status (frontend polls REST for now)
   - Progress tracking and error reporting
   - Historical job and dataset management
 
@@ -91,7 +91,7 @@ graph TB
     Training --> QLoRA
 ```
 
-**Frontend**: Built with Next.js 15 and React, handles all UI interactions, dataset uploads, job creation, and real-time monitoring via WebSocket connections.
+**Frontend**: Built with Next.js 16 and React, handles all UI interactions, dataset uploads, job creation, and real-time monitoring via WebSocket connections.
 
 **Backend**: FastAPI server provides REST endpoints for datasets, jobs, and inference. Integrates with Mistral AI API for cloud fine-tuning and manages local SQLite database for job history.
 
@@ -198,8 +198,7 @@ Press `Ctrl+C` to stop all services.
 1. **Upload Dataset**: Navigate to Datasets page, upload a JSONL file
 2. **Create Job**: Go to Jobs → New Job, select dataset and configure training parameters
 3. **Monitor**: View real-time progress on the job detail page
-4. **Test**: Use the Playground to test model inference
-5. **Compare**: Use Comparison page to compare base vs fine-tuned models
+4. **Test / Compare**: not available in the dashboard yet; use `src/mistral_api_inference.py` (see below)
 
 ### Via Command Line
 
@@ -486,9 +485,9 @@ Ce projet est **en cours de développement actif**. Voici l'état actuel :
 - ✅ Interface web moderne avec Next.js et shadcn/ui
 - ✅ API REST complète avec FastAPI
 - ✅ Support fine-tuning via Mistral API
-- ✅ Support QLoRA local (scripts)
+- ✅ Support QLoRA local (script seul, non exposé par l'API)
 - ✅ Gestion des datasets (upload, validation, versioning)
-- ✅ Suivi des jobs en temps réel (WebSocket)
+- ✅ Suivi des jobs (polling REST; endpoint WebSocket backend sans client frontend)
 - ✅ Base de données avec PostgreSQL/SQLite
 - ✅ Système de queue avec Celery (optionnel)
 - ✅ Stockage S3-compatible (MinIO/local)
@@ -500,6 +499,8 @@ Ce projet est **en cours de développement actif**. Voici l'état actuel :
 ### 🚧 En Développement
 
 - 🔄 Intégration complète QLoRA dans l'API
+- 🔄 Pages Playground et Comparison (placeholders)
+- 🔄 Client WebSocket frontend
 - 🔄 Interface d'authentification frontend
 - 🔄 Amélioration de la gestion des erreurs
 - 🔄 Optimisations de performance
