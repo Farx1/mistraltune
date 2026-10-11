@@ -60,7 +60,8 @@ def validate_jsonl(file_path: str) -> tuple[bool, str, int]:
                     if not isinstance(data, dict):
                         return False, f"Ligne {line_num}: doit être un objet JSON", line_num
                     
-                    missing_fields = required_fields - set(data.keys())
+                    # Format Mistral natif (messages) accepté tel quel
+                    missing_fields = set() if isinstance(data.get("messages"), list) else required_fields - set(data.keys())
                     if missing_fields:
                         return False, f"Ligne {line_num}: champs manquants: {missing_fields}", line_num
                     
@@ -74,6 +75,24 @@ def validate_jsonl(file_path: str) -> tuple[bool, str, int]:
         return True, "", num_lines
     except Exception as e:
         return False, f"Erreur lors de la lecture: {str(e)}", num_lines
+
+
+def to_mistral_jsonl(file_path: str) -> bytes:
+    """Convertit instruction/input/output en format `messages` attendu par Mistral (lignes `messages` inchangées)."""
+    out = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if not line.strip():
+                continue
+            data = json.loads(line)
+            if "messages" not in data:
+                prompt = data["instruction"] + (f"\n\n{data['input']}" if data.get("input") else "")
+                data = {"messages": [
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": data["output"]},
+                ]}
+            out.append(json.dumps(data, ensure_ascii=False))
+    return ("\n".join(out) + "\n").encode("utf-8")
 
 
 def upload_dataset(client: Mistral, file_path: str) -> str:
@@ -96,13 +115,12 @@ def upload_dataset(client: Mistral, file_path: str) -> str:
     print(f"✓ Fichier valide: {num_lines} exemples")
     print(f"Upload du fichier vers l'API Mistral...")
     
-    with open(file_path, 'rb') as f:
-        file_data = client.files.upload(
-            file={
-                "file_name": os.path.basename(file_path),
-                "content": f,
-            }
-        )
+    file_data = client.files.upload(
+        file={
+            "file_name": os.path.basename(file_path),
+            "content": to_mistral_jsonl(file_path),
+        }
+    )
     
     file_id = file_data.id
     print(f"✓ Fichier uploadé avec succès (ID: {file_id})")
@@ -147,29 +165,26 @@ def create_finetuning_job(
     if suffix:
         print(f"  Suffixe: {suffix}")
     
-    hyperparameters = {
-        "learning_rate": learning_rate,
-    }
+    hyperparameters = {"learning_rate": learning_rate}
+    if epochs:
+        hyperparameters["epochs"] = epochs
+    if batch_size:
+        # L'API Mistral (SDK 1.x) n'expose pas batch_size
+        print("  ⚠ batch_size ignoré: non supporté par l'API Mistral")
     
     job_params = {
         "model": model,
         "hyperparameters": hyperparameters,
-        "training_file": training_file_id,
+        "training_files": [{"file_id": training_file_id, "weight": 1}],
         "invalid_sample_skip_percentage": invalid_sample_skip_percentage,
     }
     
     if validation_file_id:
-        job_params["validation_file"] = validation_file_id
+        job_params["validation_files"] = [validation_file_id]
         print(f"  Fichier de validation: {validation_file_id}")
     
     if suffix:
         job_params["suffix"] = suffix
-    
-    if epochs:
-        job_params["epochs"] = epochs
-    
-    if batch_size:
-        job_params["batch_size"] = batch_size
     
     job = client.fine_tuning.jobs.create(**job_params)
     
