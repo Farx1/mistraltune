@@ -47,8 +47,8 @@ export default function NewJobPage() {
 
       const payload = {
         model,
-        training_file: trainingId,
-        validation_file: validationId || undefined,
+        training_file_id: trainingId,
+        validation_file_id: validationId || undefined,
       };
 
       const res = await apiClient.createJob(payload);
