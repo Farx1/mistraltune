@@ -3,13 +3,13 @@
 ## Model Details
 
 ### Model Description
-This model is a fine-tuned version of Mistral-7B-Instruct-v0.3 using QLoRA (Quantized Low-Rank Adaptation) for domain-specific question-answering tasks in French and English. The model has been trained on a curated dataset of business and technology-related questions and answers.
+This model is a fine-tuned version of Mistral-7B-Instruct-v0.3 using QLoRA (Quantized Low-Rank Adaptation) for domain-specific question-answering tasks in French and English. The training recipe targets a small curated dataset of business and technology-related questions and answers.
 
 - **Base Model**: mistralai/Mistral-7B-Instruct-v0.3
 - **Fine-tuning Method**: QLoRA (4-bit quantization + LoRA adapters)
 - **Task**: Question Answering (Domain-specific)
 - **Languages**: French, English
-- **Model Size**: ~7B parameters (base) + LoRA adapters (~16M parameters)
+- **Model Size**: ~7B parameters (base) + LoRA adapters (21.0M / 41.9M / 83.9M trainable parameters for r = 8 / 16 / 32, see [docs/THEORY.md](docs/THEORY.md))
 
 ### Model Architecture
 - **Architecture**: Transformer-based causal language model
@@ -43,8 +43,8 @@ This model is a fine-tuned version of Mistral-7B-Instruct-v0.3 using QLoRA (Quan
 
 ### Training Infrastructure
 - **Hardware**: Single GPU (24-48 GB VRAM recommended)
-- **Training Time**: ~10-30 minutes per variant
-- **Peak VRAM Usage**: ~12-16 GB (depending on LoRA rank)
+- **Training Time**: not measured yet
+- **Peak VRAM Usage**: not measured yet (estimate method in [docs/THEORY.md](docs/THEORY.md#3-vram-estimate))
 - **Reproducibility**: Fixed random seed (42)
 
 ## Evaluation
@@ -137,10 +137,10 @@ print(answer)
 - Demonstration of QLoRA fine-tuning techniques
 
 ### Misuse Prevention
-- **Content Filtering**: Basic safety checks implemented
-- **PII Protection**: Training data does not contain personal information
-- **Bias Monitoring**: Regular evaluation on diverse test cases
-- **Transparency**: Open-source implementation and documentation
+- **Content Filtering**: none. Outputs are not filtered.
+- **PII Protection**: the sample training data contains no personal information; user-uploaded datasets are not checked.
+- **Bias Monitoring**: none yet.
+- **Transparency**: open-source implementation and documentation
 
 ### Recommendations
 - Use with human oversight for critical decisions
@@ -175,9 +175,9 @@ print(answer)
 ```bibtex
 @software{mistral7b_qlora_domainqa,
   title={Mistral-7B QLoRA Domain QA},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/yourusername/mistral7b-qlora-domainqa},
+  author={Farx1},
+  year={2025},
+  url={https://github.com/Farx1/mistraltune},
   license={MIT}
 }
 ```
