@@ -40,7 +40,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from mistral_api_finetune import upload_dataset, create_finetuning_job, get_job_status, validate_jsonl
 from mistral_api_inference import compare_responses, generate_response
 from db.database import init_db, get_db
-from db.models import Job, Dataset, DatasetVersion
+from db.models import Job, Dataset, DatasetVersion, User
+from auth.jwt import create_access_token
+from auth.password import hash_password, verify_password
 from jobs.state_machine import JobState, TERMINAL_STATES, from_mistral_status, update_job_status
 from jobs.logging import get_job_logs
 from storage.s3_client import get_storage_client
