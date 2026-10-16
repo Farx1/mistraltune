@@ -12,6 +12,10 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# Training deps (requirements-train.txt); CI installs only requirements-api.txt
+pytest.importorskip("datasets")
+pytest.importorskip("sklearn")
+
 from utils.data_io import load_jsonl, format_instruction, build_hf_dataset
 from utils.metrics import normalize_text, exact_match, f1_score_tokens
 

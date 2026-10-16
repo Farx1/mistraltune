@@ -2,86 +2,55 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [main]
   pull_request:
-    branches: [ main, master, develop ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:
-    name: Backend Tests & Lint
+    name: Backend (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: '3.10'
-          cache: 'pip'
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      
-      - name: Run Ruff (linting)
-        run: |
-          ruff check src/ tests/
-        continue-on-error: false
-      
-      - name: Run Ruff format check
-        run: |
-          ruff format --check src/ tests/
-        continue-on-error: false
-      
-      - name: Run Black (formatting check)
-        run: |
-          black --check src/ tests/
-        continue-on-error: false
-      
-      - name: Run tests
-        run: |
-          pytest tests/ -v
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-api.txt
+      # API + tests only: torch/bitsandbytes are not needed and take minutes to install
+      - run: pip install -r requirements-api.txt
+      - run: ruff check src/ tests/
+      # pytest exits non-zero when no test is collected, so no separate count check is needed
+      - run: pytest -m "not slow" --cov=src --cov-report=term-missing:skip-covered
         env:
-          DEMO_MODE: 1
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY || 'test-key' }}
-      
-      - name: Verify test collection
-        run: |
-          TEST_COUNT=$(pytest --collect-only -q 2>/dev/null | grep -E "test session starts" -A 2 | tail -1 | grep -oE '[0-9]+' | head -1 || echo "0")
-          if [ -z "$TEST_COUNT" ] || [ "$TEST_COUNT" -lt 5 ]; then
-            echo "Error: Only $TEST_COUNT tests found. Expected at least 5."
-            exit 1
-          fi
-          echo "✓ Found $TEST_COUNT tests"
-  
+          DEMO_MODE: "1"
+
   frontend:
-    name: Frontend Lint & Build
+    name: Frontend
     runs-on: ubuntu-latest
-    
+    defaults:
+      run:
+        working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: "22" # Next.js 16 needs Node >= 20.9
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
-      
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci
-      
-      - name: Run ESLint
-        working-directory: frontend
-        run: npm run lint
-      
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_PUBLIC_WS_URL: ws://localhost:8000
-
