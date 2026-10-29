@@ -22,6 +22,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from db.models import Base
+import db.database as database
 from db.database import get_db
 from api.main import app
 from fastapi.testclient import TestClient
@@ -47,6 +48,8 @@ def test_db() -> Generator[Session, None, None]:
         yield shared_db
     
     app.dependency_overrides[get_db] = override_get_db
+    # Background pollers open their own SessionLocal(); point it at the test DB too
+    real_session_local, database.SessionLocal = database.SessionLocal, TestingSessionLocal
     
     try:
         yield shared_db
@@ -55,6 +58,7 @@ def test_db() -> Generator[Session, None, None]:
         # Close all connections
         engine.dispose()
         app.dependency_overrides.clear()
+        database.SessionLocal = real_session_local
         # Clean up - retry on Windows
         import time
         for _ in range(5):
