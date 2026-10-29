@@ -44,7 +44,7 @@ from db.models import Job, Dataset, DatasetVersion
 from jobs.state_machine import JobState, TERMINAL_STATES, from_mistral_status, update_job_status
 from jobs.logging import get_job_logs
 from storage.s3_client import get_storage_client
-from datasets.versioning import create_dataset_version, compute_dataset_hash
+from dataset_versioning.versioning import create_dataset_version, compute_dataset_hash
 
 # Import custom logging (avoid conflict with stdlib logging)
 import importlib.util

@@ -131,20 +131,20 @@ def load_model_and_tokenizer(model_path: str, is_adapter: bool = False, base_mod
     else:
         # Load base model with quantization for efficiency
         if use_cuda:
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-        )
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True,
+            )
         
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            quantization_config=bnb_config,
-            device_map="auto",
-            trust_remote_code=True,
-            cache_dir=cache_dir,
-        )
+            model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                quantization_config=bnb_config,
+                device_map="auto",
+                trust_remote_code=True,
+                cache_dir=cache_dir,
+            )
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 model_path,
@@ -235,14 +235,14 @@ def evaluate_model(model, tokenizer, eval_data: List[Dict[str, Any]],
         
         # Generate prediction
         try:
-        prediction = generate_response(
-            model, tokenizer, 
-            item['instruction'], 
-            item.get('input', ''),
-            max_new_tokens
-        )
-        predictions.append(prediction)
-        ground_truths.append(item['output'])
+            prediction = generate_response(
+                model, tokenizer, 
+                item['instruction'], 
+                item.get('input', ''),
+                max_new_tokens
+            )
+            predictions.append(prediction)
+            ground_truths.append(item['output'])
             lengths.append(len(prediction))
         except Exception as e:
             print(f"\nError generating response for example {i+1}: {e}")
@@ -303,14 +303,14 @@ def save_results_to_csv(model_path: str, is_adapter: bool, em_score: float,
         lora_alpha = ""
         if is_adapter:
             if "r16a32" in model_path or "r16" in model_path:
-            lora_r = "16"
-            lora_alpha = "32"
+                lora_r = "16"
+                lora_alpha = "32"
             elif "r8a16" in model_path or "r8" in model_path:
-            lora_r = "8"
-            lora_alpha = "16"
+                lora_r = "8"
+                lora_alpha = "16"
             elif "r32a64" in model_path or "r32" in model_path:
-            lora_r = "32"
-            lora_alpha = "64"
+                lora_r = "32"
+                lora_alpha = "64"
         
         writer.writerow([
             run_id,
@@ -382,7 +382,7 @@ def main():
     
     # Load evaluation data
     try:
-    eval_data = load_eval_data(args.eval_file)
+        eval_data = load_eval_data(args.eval_file)
         if len(eval_data) == 0:
             print(f"ERROR: Evaluation file is empty: {args.eval_file}", file=sys.stderr)
             sys.exit(1)
