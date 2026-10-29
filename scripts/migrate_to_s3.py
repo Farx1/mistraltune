@@ -71,7 +71,7 @@ def migrate_to_s3():
                         version.file_hash = storage_client.compute_file_hash(local_file)
                 else:
                     # Create version if doesn't exist
-                    from datasets.versioning import create_dataset_version
+                    from dataset_versioning.versioning import create_dataset_version
                     create_dataset_version(db, dataset.id, local_file, s3_key=s3_key)
                 
                 # Update dataset hash if missing
