@@ -6,8 +6,8 @@ import pytest
 import json
 import time
 from fastapi import status
-from src.db.models import Job, Dataset
-from src.jobs.state_machine import JobState
+from db.models import Job, Dataset
+from jobs.state_machine import JobState
 
 
 def test_health_endpoint(client):
@@ -237,7 +237,7 @@ def test_get_job_logs(client, test_db):
     test_db.add(job)
     test_db.commit()
     
-    from src.db.models import JobLog
+    from db.models import JobLog
     log1 = JobLog(
         job_id="job_1",
         timestamp=int(time.time()),

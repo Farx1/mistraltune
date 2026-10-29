@@ -5,8 +5,8 @@ End-to-end tests for user workflows.
 import pytest
 import time
 from fastapi import status
-from src.db.models import Job, Dataset, DatasetVersion
-from src.jobs.state_machine import JobState
+from db.models import Job, Dataset, DatasetVersion
+from jobs.state_machine import JobState
 
 
 def test_complete_dataset_upload_workflow(client, sample_jsonl_file, test_db):
@@ -105,8 +105,8 @@ def test_job_logs_workflow(client, test_db):
     test_db.commit()
     
     # Add logs
-    from src.db.models import JobLog
-    from src.jobs.logging import log_job_message
+    from db.models import JobLog
+    from jobs.logging import log_job_message
     
     log_job_message(test_db, "test_job_logs", "INFO", "Job started")
     log_job_message(test_db, "test_job_logs", "INFO", "Processing data")

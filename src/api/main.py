@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from mistralai import Mistral
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 import logging
 
@@ -43,7 +44,7 @@ from db.models import Job, Dataset, DatasetVersion
 from jobs.state_machine import JobState, update_job_status
 from jobs.logging import get_job_logs
 from storage.s3_client import get_storage_client
-from datasets.versioning import create_dataset_version, compute_dataset_hash
+from dataset_versioning.versioning import create_dataset_version, compute_dataset_hash
 
 # Import custom logging (avoid conflict with stdlib logging)
 import importlib.util
@@ -258,7 +259,7 @@ async def health(db: Session = Depends(get_db)):
     
     # Check database connectivity
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         health_status["database"] = "connected"
     except Exception as e:
         health_status["database"] = f"error: {str(e)}"

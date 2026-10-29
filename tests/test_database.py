@@ -4,8 +4,8 @@ Tests for database models and operations.
 
 import pytest
 import time
-from src.db.models import Job, Dataset, DatasetVersion, JobLog, User
-from src.jobs.state_machine import JobState, validate_state_transition, update_job_status
+from db.models import Job, Dataset, DatasetVersion, JobLog, User
+from jobs.state_machine import JobState, validate_state_transition, update_job_status
 
 
 def test_job_model_creation(test_db):

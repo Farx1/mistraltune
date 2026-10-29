@@ -9,6 +9,37 @@
 > Working today: dataset upload/validation and Mistral API fine-tuning jobs (backend + CLI).  
 > Not yet working: Playground and Comparison pages are UI placeholders, the frontend has no WebSocket client (job pages poll the REST API), local QLoRA is a standalone script only (the API returns `501` for `qlora_local`), and the frontend cannot be built from this repo yet (`frontend/lib/` is missing).
 
+## ⚡ Quickstart (demo mode: no API key, no cost)
+
+```bash
+git clone https://github.com/Farx1/mistraltune.git && cd mistraltune
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scriptsctivate
+pip install -r requirements.txt
+DEMO_MODE=1 python -m uvicorn src.api.main:app --port 8000   # Windows: set DEMO_MODE=1 first
+```
+
+Open http://localhost:8000/docs. `DEMO_MODE=1` swaps the Mistral client for a mock, so nothing is sent to (or billed by) Mistral.
+
+## ✅ Supported matrix
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Mistral API fine-tuning (cloud) | Yes, after #3 | Mistral SDK 1.x (`mistralai>=1,<2`); upload, create, status, cancel via API and CLI |
+| Local QLoRA training | CLI script only | `src/train_qlora.py`; API returns `501` for `qlora_local`. Only tested on CPU with a tiny model (LoRA, no 4-bit); the 4-bit GPU path is not tested |
+| Web dashboard | After #6 | Datasets and jobs pages; Playground and Comparison are placeholders |
+| Python | 3.10+ | |
+| Node.js | 20.9+ | Required by Next.js 16 |
+
+## ⚠️ Limitations
+
+- No authentication on dataset, job and inference endpoints; do not expose the API publicly (see `SECURITY.md` once merged).
+- No training or evaluation results yet: EM/F1, latency and VRAM numbers in `MODEL_CARD.md` are not measured.
+- The 4-bit QLoRA path (bitsandbytes, CUDA) has never been run in CI or tests.
+- The frontend has no WebSocket client; job pages poll the REST API.
+- Sample dataset is tiny (20 train / 5 val examples): useful to check the pipeline, not to get a good model.
+
+---
+
 A professional fine-tuning platform for Mistral AI models with support for both cloud-based API fine-tuning and local QLoRA training. Features a modern web dashboard for managing jobs, datasets, and comparing models.
 
 ---
@@ -126,7 +157,7 @@ mistraltune/
 ### Prerequisites
 
 - **Python**: 3.10 or higher
-- **Node.js**: 18 or higher
+- **Node.js**: 20.9 or higher (Next.js 16)
 - **Mistral API Key**: Get one from [console.mistral.ai](https://console.mistral.ai)
 - **GPU** (optional): Required only for local QLoRA training (24-48 GB VRAM recommended)
 
@@ -315,7 +346,7 @@ If all steps pass, the project is ready for deployment.
 
 This project uses GitHub Actions for CI/CD. The CI pipeline runs on every push and pull request:
 
-- **Backend**: Linting (Ruff), formatting checks (Black, Ruff format), and pytest tests
+- **Backend**: Linting (Ruff) and pytest tests
 - **Frontend**: ESLint and production build
 - **Test Verification**: Ensures at least 5 tests are discovered and run
 
@@ -355,7 +386,7 @@ npm run dev
 ruff check src/ tests/
 
 # Backend formatting
-black src/ tests/
+ruff format src/ tests/
 
 # Frontend linting
 cd frontend

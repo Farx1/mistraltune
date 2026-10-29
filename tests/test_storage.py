@@ -4,8 +4,8 @@ Tests for storage functionality.
 
 import pytest
 from pathlib import Path
-from src.storage.s3_client import StorageClient, get_storage_client
-from src.storage.config import StorageConfig
+from storage.s3_client import StorageClient, get_storage_client
+from storage.config import StorageConfig
 
 
 def test_storage_config():
