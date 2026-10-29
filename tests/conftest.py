@@ -18,11 +18,12 @@ os.environ["SQL_DEBUG"] = "0"
 
 # Import after setting env vars
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Import via src/ on sys.path, like src/api/main.py does, so get_db override hits the app's module
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from src.db.models import Base
-from src.db.database import get_db
-from src.api.main import app
+from db.models import Base
+from db.database import get_db
+from api.main import app
 from fastapi.testclient import TestClient
 
 

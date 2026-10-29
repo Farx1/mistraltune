@@ -63,14 +63,7 @@ This model is a fine-tuned version of Mistral-7B-Instruct-v0.3 using QLoRA (Quan
 - **Hardware**: Same as training (single GPU)
 
 ### Results Summary
-| Model Variant | EM Score | F1 Score | Latency p50 | Latency p95 | VRAM (GB) |
-|---------------|----------|----------|-------------|-------------|-----------|
-| Baseline | 0.XXX | 0.XXX | X.XXXs | X.XXXs | ~XX |
-| LoRA r8/a16 | 0.XXX | 0.XXX | X.XXXs | X.XXXs | ~XX |
-| LoRA r16/a32 | 0.XXX | 0.XXX | X.XXXs | X.XXXs | ~XX |
-| LoRA r32/a64 | 0.XXX | 0.XXX | X.XXXs | X.XXXs | ~XX |
-
-*Note: Results will be populated after training and evaluation*
+**Not yet run.** No training or evaluation results exist for this model yet. This section will list measured EM/F1, latency and VRAM per LoRA variant once the evaluation has been run.
 
 ## Usage
 

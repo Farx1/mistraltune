@@ -4,9 +4,9 @@ Tests for authentication functionality.
 
 import pytest
 import time
-from src.auth.password import hash_password, verify_password
-from src.auth.jwt import create_access_token, verify_token
-from src.db.models import User
+from auth.password import hash_password, verify_password
+from auth.jwt import create_access_token, verify_token
+from db.models import User
 
 
 def test_password_hashing():
