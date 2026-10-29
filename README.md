@@ -116,7 +116,7 @@ mistraltune/
 ├── configs/              # YAML configuration files
 ├── data/                 # Datasets (JSONL format)
 ├── tests/                # Test suite
-└── docs/                 # Documentation
+└── docs/                 # Documentation (THEORY.md: LoRA, QLoRA, VRAM estimate)
 ```
 
 ---
