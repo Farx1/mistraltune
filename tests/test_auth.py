@@ -80,3 +80,14 @@ def test_auth_endpoints_disabled(client, test_db):
     assert response.status_code == 400
     assert "disabled" in response.json()["detail"].lower()
 
+
+
+def test_register_then_login(client, test_db, monkeypatch):
+    """Auth endpoints used names that were never imported (NameError when enabled)."""
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    creds = {"email": "a@example.com", "password": "s3cret-pass"}
+    assert client.post("/api/auth/register", params=creds).status_code == 200
+    response = client.post("/api/auth/login", params=creds)
+    assert response.status_code == 200
+    assert response.json()["access_token"]
+    assert client.post("/api/auth/login", params={**creds, "password": "wrong"}).status_code == 401

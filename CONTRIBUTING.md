@@ -16,8 +16,9 @@ Thank you for your interest in contributing to MistralTune! This document provid
    python -m venv .venv
    source .venv/bin/activate  # Windows: .venv\Scripts\activate
    
-   # Install dependencies
-   pip install -r requirements.txt
+   # Install dependencies (API + tests; add requirements-train.txt for local QLoRA)
+   pip install -r requirements-api.txt
+   pre-commit install  # optional: runs ruff on commit
    
    # Install frontend dependencies
    cd frontend
@@ -40,12 +41,7 @@ Thank you for your interest in contributing to MistralTune! This document provid
   ruff check src/ tests/
   ```
 
-- **Formatting**: We use [Black](https://black.readthedocs.io/) and Ruff format
-  ```bash
-  ruff format src/ tests/
-  # or
-  black src/ tests/
-  ```
+- **Formatting**: not enforced by CI yet. Use `ruff format` on the files you touch.
 
 - **Type hints**: Prefer type hints for function parameters and return values
 - **Docstrings**: Use Google-style docstrings for public functions
@@ -67,8 +63,11 @@ Thank you for your interest in contributing to MistralTune! This document provid
 All tests run in **DEMO_MODE** by default (mocked API):
 
 ```bash
-# Run all tests
-pytest tests/ -v
+# Run all tests (what CI runs)
+DEMO_MODE=1 pytest -m "not slow"
+
+# Slow tests (train a tiny model on CPU, needs requirements-train.txt)
+pytest -m slow
 
 # Run specific test file
 pytest tests/test_api_endpoints.py -v
@@ -108,7 +107,6 @@ Aim for:
    ```bash
    # Backend
    ruff check src/ tests/
-   ruff format --check src/ tests/
    pytest tests/ -v
    
    # Frontend

@@ -40,8 +40,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from mistral_api_finetune import upload_dataset, create_finetuning_job, get_job_status, validate_jsonl
 from mistral_api_inference import compare_responses, generate_response
 from db.database import init_db, get_db
-from db.models import Job, Dataset, DatasetVersion
-from jobs.state_machine import JobState, update_job_status
+from db.models import Job, Dataset, DatasetVersion, User
+from auth.jwt import create_access_token
+from auth.password import hash_password, verify_password
+from jobs.state_machine import JobState, TERMINAL_STATES, from_mistral_status, update_job_status
 from jobs.logging import get_job_logs
 from storage.s3_client import get_storage_client
 from dataset_versioning.versioning import create_dataset_version, compute_dataset_hash
@@ -143,7 +145,7 @@ def _create_mock_client():
     mock_job = Mock()
     mock_job.id = "ftjob_demo123"
     mock_job.model = "open-mistral-7b"
-    mock_job.status = "validated"
+    mock_job.status = "VALIDATED"
     mock_job.created_at = 1234567890
     mock_job.fine_tuned_model = None
     mock_job.error = None
@@ -154,11 +156,18 @@ def _create_mock_client():
     mock_job_status = Mock()
     mock_job_status.id = "ftjob_demo123"
     mock_job_status.model = "open-mistral-7b"
-    mock_job_status.status = "succeeded"
+    mock_job_status.status = "SUCCESS"
     mock_job_status.created_at = 1234567890
     mock_job_status.fine_tuned_model = "ft:open-mistral-7b:demo123:20240101:abc123"
     mock_job_status.error = None
-    mock_client.fine_tuning.jobs.get = Mock(return_value=mock_job_status)
+    def _get_job(job_id):
+        # Only the job the mock created exists, like the real API (404 otherwise)
+        if job_id != mock_job.id:
+            raise Exception(f"Job {job_id} not found")
+        return mock_job_status
+
+    mock_client.fine_tuning.jobs.get = Mock(side_effect=_get_job)
+    mock_client.fine_tuning.jobs.cancel = Mock(return_value=mock_job_status)
     # Mock chat completions
     mock_chat_response = Mock()
     mock_choice = Mock()
@@ -210,6 +219,17 @@ def get_mistral_client() -> Mistral:
 
 
 # WebSocket connections manager
+def _sync_mistral_status(db: Session, job: Job, client) -> dict:
+    """Fetch a Mistral job, store its status mapped to JobState, return the raw info."""
+    status_info = get_job_status(client, job.id)
+    job.status = from_mistral_status(status_info["status"])
+    job.model_output_ref = status_info.get("fine_tuned_model")
+    if status_info.get("error"):
+        job.error_message = str(status_info.get("error"))
+    db.commit()
+    return status_info
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
@@ -534,26 +554,7 @@ async def get_job(job_id: str, db: Session = Depends(get_db)):
     if job.job_type == 'mistral_api':
         try:
             client = get_mistral_client()
-            status_info = get_job_status(client, job_id)
-            
-            # Map Mistral status (lowercase) to our status format
-            mistral_status = status_info["status"].lower()
-            status_map = {
-                "validated": "QUEUED",
-                "queued": "QUEUED",
-                "running": "RUNNING",
-                "succeeded": "SUCCEEDED",
-                "failed": "FAILED",
-                "cancelled": "CANCELLED",
-            }
-            mapped_status = status_map.get(mistral_status, mistral_status.upper())
-            
-            # Mettre à jour la DB avec ORM
-            job.status = mapped_status
-            job.model_output_ref = status_info.get("fine_tuned_model")
-            if status_info.get("error"):
-                job.error_message = str(status_info.get("error"))
-            db.commit()
+            _sync_mistral_status(db, job, client)
             
             # Return in format expected by frontend
             job_dict = job.to_dict()
@@ -578,30 +579,11 @@ async def get_job_status_endpoint(job_id: str, db: Session = Depends(get_db)):
     if job.job_type == 'mistral_api':
         try:
             client = get_mistral_client()
-            status_info = get_job_status(client, job_id)
-            
-            # Map Mistral status (lowercase) to our status format
-            mistral_status = status_info["status"].lower()
-            status_map = {
-                "validated": "QUEUED",
-                "queued": "QUEUED",
-                "running": "RUNNING",
-                "succeeded": "SUCCEEDED",
-                "failed": "FAILED",
-                "cancelled": "CANCELLED",
-            }
-            mapped_status = status_map.get(mistral_status, mistral_status.upper())
-            
-            # Mettre à jour la DB avec ORM
-            job.status = mapped_status
-            job.model_output_ref = status_info.get("fine_tuned_model")
-            if status_info.get("error"):
-                job.error_message = str(status_info.get("error"))
-            db.commit()
+            _sync_mistral_status(db, job, client)
             
             return JobStatusResponse(
                 id=job.id,
-                status=mapped_status,
+                status=job.status,
                 model=job.model,
                 created_at=job.created_at,
                 fine_tuned_model=job.model_output_ref,
@@ -682,28 +664,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     # Si c'est un job Mistral, récupérer le statut à jour
                     if job.job_type == 'mistral_api':
                         client = get_mistral_client()
-                        status_info = get_job_status(client, job_id)
-                        
-                        # Map Mistral status (lowercase) to our status format
-                        mistral_status = status_info["status"].lower()
-                        # Mistral uses: validated, queued, running, succeeded, failed, cancelled
-                        # Our states are: PENDING, QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED
-                        status_map = {
-                            "validated": "QUEUED",
-                            "queued": "QUEUED",
-                            "running": "RUNNING",
-                            "succeeded": "SUCCEEDED",
-                            "failed": "FAILED",
-                            "cancelled": "CANCELLED",
-                        }
-                        mapped_status = status_map.get(mistral_status, mistral_status.upper())
-                        
-                        # Mettre à jour la DB avec ORM
-                        job.status = mapped_status
-                        job.model_output_ref = status_info.get("fine_tuned_model")
-                        if status_info.get("error"):
-                            job.error_message = str(status_info.get("error"))
-                        db.commit()
+                        status_info = _sync_mistral_status(db, job, client)
+                        mapped_status = job.status
                         
                         await manager.send_personal_message({
                             "type": "status_update",
@@ -715,7 +677,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         }, job_id)
                         
                         # Si terminé, arrêter le polling
-                        if mapped_status in ["SUCCEEDED", "FAILED", "CANCELLED"]:
+                        if mapped_status in TERMINAL_STATES:
                             break
                     else:
                         await manager.send_personal_message({
@@ -750,11 +712,18 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Job non trouvé")
     
     # Vérifier si le job peut être annulé
-    if job.status in ["succeeded", "failed", "cancelled"]:
+    if job.status.upper() in TERMINAL_STATES:
         raise HTTPException(status_code=400, detail=f"Le job est déjà {job.status}")
     
+    # Annuler d'abord chez Mistral: ne pas marquer annulé un job qui continue (et coûte) côté API
+    if job.job_type == "mistral_api":
+        try:
+            get_mistral_client().fine_tuning.jobs.cancel(job_id=job_id)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Annulation Mistral impossible: {e}")
+    
     # Marquer comme annulé
-    job.status = "cancelled"
+    job.status = JobState.CANCELLED.value
     job.finished_at = int(datetime.now().timestamp())
     db.commit()
     
@@ -767,7 +736,7 @@ async def cancel_job(job_id: str, db: Session = Depends(get_db)):
         except Exception as e:
             logger.warning(f"Failed to revoke Celery task: {e}")
     
-    return {"message": "Job annulé", "job_id": job_id, "status": "cancelled"}
+    return {"message": "Job annulé", "job_id": job_id, "status": job.status}
 
 
 @app.get("/api/jobs/{job_id}/logs")
@@ -799,12 +768,7 @@ async def _poll_job_status_background(job_id: str):
         
         if job.job_type == "mistral_api":
             client = get_mistral_client()
-            status_info = get_job_status(client, job_id)
-            job.status = status_info["status"]
-            job.model_output_ref = status_info.get("fine_tuned_model")
-            if status_info.get("error"):
-                job.error_message = str(status_info.get("error"))
-            db.commit()
+            _sync_mistral_status(db, job, client)
     finally:
         db.close()
 

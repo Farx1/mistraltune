@@ -7,7 +7,8 @@ import json
 import time
 from fastapi import status
 from db.models import Job, Dataset
-from jobs.state_machine import JobState
+from unittest.mock import Mock, patch
+from jobs.state_machine import JobState, from_mistral_status
 
 
 def test_health_endpoint(client):
@@ -198,10 +199,13 @@ def test_cancel_job_success(client, test_db):
     test_db.add(job)
     test_db.commit()
     
-    response = client.post("/api/jobs/job_1/cancel")
+    mistral = Mock()
+    with patch("api.main.get_mistral_client", return_value=mistral):
+        response = client.post("/api/jobs/job_1/cancel")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "cancelled"
+    assert data["status"] == "CANCELLED"
+    mistral.fine_tuning.jobs.cancel.assert_called_once_with(job_id="job_1")
     
     # Verify job status updated
     test_db.refresh(job)
@@ -222,6 +226,28 @@ def test_cancel_job_already_completed(client, test_db):
     
     response = client.post("/api/jobs/job_1/cancel")
     assert response.status_code == 400
+
+
+def test_cancel_job_mistral_error_keeps_status(client, test_db):
+    """If Mistral refuses the cancel, the job must not be marked cancelled locally."""
+    test_db.add(Job(id="job_2", job_type="mistral_api", model="open-mistral-7b",
+                    status=JobState.RUNNING.value, created_at=int(time.time())))
+    test_db.commit()
+    mistral = Mock()
+    mistral.fine_tuning.jobs.cancel.side_effect = Exception("boom")
+    with patch("api.main.get_mistral_client", return_value=mistral):
+        response = client.post("/api/jobs/job_2/cancel")
+    assert response.status_code == 502
+    assert test_db.query(Job).filter(Job.id == "job_2").first().status == JobState.RUNNING.value
+
+
+@pytest.mark.parametrize("mistral, ours", [
+    ("VALIDATED", "QUEUED"), ("RUNNING", "RUNNING"), ("SUCCESS", "SUCCEEDED"),
+    ("FAILED_VALIDATION", "FAILED"), ("CANCELLATION_REQUESTED", "RUNNING"),
+    ("CANCELLED", "CANCELLED"), ("succeeded", "SUCCEEDED"), ("???", "RUNNING"),
+])
+def test_from_mistral_status(mistral, ours):
+    assert from_mistral_status(mistral) == ours
 
 
 def test_get_job_logs(client, test_db):

@@ -22,7 +22,7 @@ from workers.celery_app import celery_app
 from db.database import SessionLocal
 from db.models import Job
 from jobs.logging import log_job_message
-from jobs.state_machine import JobState, update_job_status
+from jobs.state_machine import JobState, TERMINAL_STATES, from_mistral_status, update_job_status
 from mistral_api_finetune import get_job_status
 
 logger = get_task_logger(__name__)
@@ -86,16 +86,6 @@ def execute_mistral_api_job(self, job_id: str):
         max_polls = 720  # 1 hour max (5 second intervals)
         poll_count = 0
         
-        # Status mapping from Mistral (lowercase) to our states (uppercase)
-        status_map = {
-            "validated": JobState.QUEUED.value,
-            "queued": JobState.QUEUED.value,
-            "running": JobState.RUNNING.value,
-            "succeeded": JobState.SUCCEEDED.value,
-            "failed": JobState.FAILED.value,
-            "cancelled": JobState.CANCELLED.value,
-        }
-        
         while poll_count < max_polls:
             # Check if task was revoked
             if self.is_aborted():
@@ -106,8 +96,7 @@ def execute_mistral_api_job(self, job_id: str):
             # Get current status from Mistral API
             try:
                 status_info = get_job_status(client, job_id)
-                mistral_status = status_info["status"].lower()
-                current_status = status_map.get(mistral_status, mistral_status.upper())
+                current_status = from_mistral_status(status_info["status"])
                 
                 # Update job in database using state machine
                 update_job_status(
@@ -122,7 +111,7 @@ def execute_mistral_api_job(self, job_id: str):
                 log_job_message(db, job_id, "INFO", f"Status: {current_status}")
                 
                 # Check if job is complete
-                if current_status in [JobState.SUCCEEDED.value, JobState.FAILED.value, JobState.CANCELLED.value]:
+                if current_status in TERMINAL_STATES:
                     job = db.query(Job).filter(Job.id == job_id).first()
                     if current_status == JobState.SUCCEEDED.value:
                         log_job_message(db, job_id, "INFO", f"Job completed successfully. Model: {job.model_output_ref}")

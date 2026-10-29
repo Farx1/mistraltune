@@ -30,6 +30,8 @@ from datetime import datetime
 
 from mistralai import Mistral
 
+from jobs.state_machine import TERMINAL_STATES, from_mistral_status
+
 
 def validate_jsonl(file_path: str) -> tuple[bool, str, int]:
     """
@@ -236,7 +238,7 @@ def wait_for_job_completion(
     try:
         while True:
             status_info = get_job_status(client, job_id)
-            current_status = status_info["status"]
+            current_status = from_mistral_status(status_info["status"])
             
             # Afficher le statut seulement s'il a changé
             if current_status != last_status:
@@ -252,15 +254,15 @@ def wait_for_job_completion(
                 last_status = current_status
             
             # Vérifier si le job est terminé
-            if current_status in ["succeeded", "failed", "cancelled"]:
+            if current_status in TERMINAL_STATES:
                 elapsed_time = time.time() - start_time
                 print(f"\n✓ Job terminé après {elapsed_time/60:.1f} minutes")
                 
-                if current_status == "succeeded":
+                if current_status == "SUCCEEDED":
                     print(f"✓ Fine-tuning réussi!")
                     if status_info.get("fine_tuned_model"):
                         print(f"  Modèle disponible: {status_info['fine_tuned_model']}")
-                elif current_status == "failed":
+                elif current_status == "FAILED":
                     print(f"✗ Fine-tuning échoué")
                     if status_info.get("error"):
                         print(f"  Erreur: {status_info['error']}")
