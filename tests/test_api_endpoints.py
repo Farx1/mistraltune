@@ -267,3 +267,30 @@ def test_metrics_endpoint(client):
     assert response.status_code == 200
     # Should return Prometheus-style metrics
     assert "mistraltune" in response.text
+
+
+def test_upload_dataset_too_large(client, monkeypatch):
+    """Uploads above MAX_UPLOAD_BYTES are rejected before touching disk."""
+    import api.main as main_mod
+    monkeypatch.setattr(main_mod, "MAX_UPLOAD_BYTES", 10)
+    response = client.post(
+        "/api/datasets/upload",
+        files={"file": ("big.jsonl", b'{"instruction": "x", "output": "y"}\n', "application/jsonl")},
+    )
+    assert response.status_code == 413
+
+
+def test_upload_dataset_filename_not_used_as_path(client, test_db):
+    """A traversal filename must not overwrite or delete files outside data/uploads."""
+    from pathlib import Path
+    sentinel = Path("data/sentinel_upload_test.jsonl")
+    sentinel.write_text("keep me", encoding="utf-8")
+    try:
+        response = client.post(
+            "/api/datasets/upload",
+            files={"file": ("../sentinel_upload_test.jsonl", b'{"instruction": "x", "output": "y"}\n', "application/jsonl")},
+        )
+        assert response.status_code in [200, 500]
+        assert sentinel.read_text(encoding="utf-8") == "keep me"
+    finally:
+        sentinel.unlink(missing_ok=True)
