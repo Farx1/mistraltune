@@ -21,6 +21,29 @@ class JobState(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+TERMINAL_STATES = {JobState.SUCCEEDED.value, JobState.FAILED.value, JobState.CANCELLED.value}
+
+# Mistral SDK 1.x job statuses -> JobState (lowercase legacy names kept for old rows/mocks)
+_MISTRAL_STATUS = {
+    "QUEUED": JobState.QUEUED,
+    "STARTED": JobState.QUEUED,
+    "VALIDATING": JobState.QUEUED,
+    "VALIDATED": JobState.QUEUED,
+    "RUNNING": JobState.RUNNING,
+    "CANCELLATION_REQUESTED": JobState.RUNNING,  # not terminal until Mistral reports CANCELLED
+    "SUCCESS": JobState.SUCCEEDED,
+    "SUCCEEDED": JobState.SUCCEEDED,
+    "FAILED": JobState.FAILED,
+    "FAILED_VALIDATION": JobState.FAILED,
+    "CANCELLED": JobState.CANCELLED,
+}
+
+
+def from_mistral_status(status: str) -> str:
+    """Map a Mistral job status to a JobState value. Unknown statuses count as RUNNING (non-terminal)."""
+    return _MISTRAL_STATUS.get(str(status).upper(), JobState.RUNNING).value
+
+
 # Valid state transitions
 VALID_TRANSITIONS = {
     JobState.PENDING: [JobState.QUEUED, JobState.CANCELLED],
@@ -49,7 +72,8 @@ def validate_state_transition(current_state: str, new_state: str) -> bool:
     except ValueError:
         return False
     
-    return new in VALID_TRANSITIONS.get(current, [])
+    # Polling reports the same state many times; that is not a transition
+    return new == current or new in VALID_TRANSITIONS.get(current, [])
 
 
 def update_job_status(

@@ -9,7 +9,7 @@ export function StatusBadge({ status }: { status: string }) {
     succeeded: { label: "Succeeded", cls: "border-primary/25 bg-primary/10 text-foreground", Icon: CheckCircle2 },
     running: { label: "Running", cls: "border-border bg-muted/40 text-foreground", Icon: Loader2 },
     queued: { label: "Queued", cls: "border-border bg-background/50 text-muted-foreground", Icon: Clock },
-    validating_files: { label: "Validating", cls: "border-border bg-background/50 text-muted-foreground", Icon: Loader2 },
+    pending: { label: "Pending", cls: "border-border bg-background/50 text-muted-foreground", Icon: Clock },
     failed: { label: "Failed", cls: "border-destructive/30 bg-destructive/10 text-destructive", Icon: XCircle },
     cancelled: { label: "Cancelled", cls: "border-border bg-background/50 text-muted-foreground", Icon: Ban },
   };
@@ -18,7 +18,7 @@ export function StatusBadge({ status }: { status: string }) {
 
   return (
     <Badge variant="outline" className={cn("gap-1.5 rounded-full", cfg.cls)}>
-      <cfg.Icon className={cn("h-3.5 w-3.5", s === "running" || s === "validating_files" ? "animate-spin" : "")} />
+      <cfg.Icon className={cn("h-3.5 w-3.5", s === "running" ? "animate-spin" : "")} />
       {cfg.label}
     </Badge>
   );

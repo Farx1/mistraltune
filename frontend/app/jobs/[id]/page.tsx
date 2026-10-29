@@ -57,7 +57,7 @@ export default function JobDetailsPage() {
               <ArrowLeft className="h-4 w-4" /> Back
             </Link>
           </Button>
-          <Button onClick={cancel} disabled={canceling || !job || ["succeeded", "failed", "cancelled"].includes(job.status)} className="gap-2">
+          <Button onClick={cancel} disabled={canceling || !job || ["SUCCEEDED", "FAILED", "CANCELLED"].includes(job.status)} className="gap-2">
             <Ban className="h-4 w-4" />
             {canceling ? "Canceling…" : "Cancel job"}
           </Button>

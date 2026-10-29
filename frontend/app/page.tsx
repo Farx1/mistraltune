@@ -49,9 +49,9 @@ export default function DashboardPage() {
 
   const stats = useMemo(() => {
     const total = jobs.length;
-    const active = jobs.filter((x) => ["queued", "running", "validating_files"].includes(x.status)).length;
-    const ok = jobs.filter((x) => x.status === "succeeded").length;
-    const fail = jobs.filter((x) => x.status === "failed").length;
+    const active = jobs.filter((x) => ["PENDING", "QUEUED", "RUNNING"].includes(x.status)).length;
+    const ok = jobs.filter((x) => x.status === "SUCCEEDED").length;
+    const fail = jobs.filter((x) => x.status === "FAILED").length;
     const successRate = total ? Math.round((ok / total) * 100) : 0;
 
     const filtered =
